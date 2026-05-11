@@ -1,0 +1,3 @@
+A2A-IDF conformance suite — docs and fixture scaffolding only.
+No executable code paths in this repository yet.
+Re-evaluate this opt-out once scripts/verify.mjs and scripts/verify.py land.
