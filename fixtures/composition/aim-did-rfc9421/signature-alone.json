@@ -1,0 +1,93 @@
+{
+  "$schema": "https://a2a-idf.opena2a.org/schemas/fixture-composition-v1.json",
+  "name": "aim-did-rfc9421/signature-alone",
+  "description": "A2A-IDF identity-framework wrap of an Envoys §13 Vector 1 wire signature. The keyid URL resolves to a W3C DID Document (Ed25519VerificationKey2020 + publicKeyMultibase) rather than the Envoys §6 compact form. Because the RFC 9421 signature base depends only on the signed components and parameters — not on the keyid document shape — the resulting signature is byte-identical to Envoys §13 Vector 1. This fixture demonstrates that a verifier implementing A2A-IDF §6 dual-shape keyid resolution can interoperate with Envoys-signed traffic without re-keying or re-signing.",
+  "spec": [
+    {
+      "id": "A2A-IDF",
+      "ref": "https://github.com/a2aproject/A2A/pull/1496",
+      "section": "§6 Public-key resolution (dual-shape: application/did+json vs compact form)"
+    },
+    {
+      "id": "Envoys signature/v1",
+      "ref": "https://envoys.me/specs/signature/v1",
+      "version": "1.4.0",
+      "specSha256": "5dcc855ecb4975e991584c2a1093fa866a027daf734166d2834a426bbc21b2e9",
+      "section": "§13 Vector 1 (GET request, no body)"
+    },
+    {
+      "id": "RFC 9421",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+      "section": "§2.5 Creating the Signature Base"
+    },
+    {
+      "id": "RFC 9530",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+      "section": "Content-Digest header field"
+    },
+    {
+      "id": "RFC 8032",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+      "section": "§7.1 Test 1 (Ed25519 keypair)"
+    },
+    {
+      "id": "W3C DID Core v1.0",
+      "ref": "https://www.w3.org/TR/did-core/",
+      "section": "§5.2 Verification Methods"
+    }
+  ],
+  "keypairRef": "../../vectors/rfc8032-7-1.json",
+  "input": {
+    "method": "GET",
+    "path": "/api/health",
+    "body": "",
+    "bodyEncoding": "utf-8"
+  },
+  "signatureParams": {
+    "components": ["@method", "@path", "content-digest"],
+    "keyid": "https://envoys.me/agents/test@rfc8032-vec1.example",
+    "created": 1714000000,
+    "nonce": "AAECAwQFBgcICQoLDA0ODw"
+  },
+  "keyidResolution": {
+    "shape": "did-json",
+    "contentType": "application/did+json",
+    "document": {
+      "@context": [
+        "https://www.w3.org/ns/did/v1",
+        "https://w3id.org/security/suites/ed25519-2020/v1"
+      ],
+      "id": "did:web:envoys.me:agents:test%40rfc8032-vec1.example",
+      "verificationMethod": [
+        {
+          "id": "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1",
+          "type": "Ed25519VerificationKey2020",
+          "controller": "did:web:envoys.me:agents:test%40rfc8032-vec1.example",
+          "publicKeyMultibase": "z6MktwupdmLXVVqTzCw4i46r4uGyosGXRnR3XjN4Zq7oMMsw"
+        }
+      ],
+      "assertionMethod": [
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1"
+      ],
+      "authentication": [
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1"
+      ]
+    }
+  },
+  "expected": {
+    "contentDigest": "sha-256=:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=:",
+    "signatureBase": "\"@method\": GET\n\"@path\": /api/health\n\"content-digest\": sha-256=:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=:\n\"@signature-params\": (\"@method\" \"@path\" \"content-digest\");keyid=\"https://envoys.me/agents/test@rfc8032-vec1.example\";created=1714000000;nonce=\"AAECAwQFBgcICQoLDA0ODw\"",
+    "signatureInput": "sig1=(\"@method\" \"@path\" \"content-digest\");keyid=\"https://envoys.me/agents/test@rfc8032-vec1.example\";created=1714000000;nonce=\"AAECAwQFBgcICQoLDA0ODw\"",
+    "signature": "sig1=:XUpjUHt36NbHgAZrQkFY2fSNUR19tgmRlGO1dBhaZDgBv4wb55qgJf2buv3wgnTYwtT+1sH2jzSbcgG6FLGKCA==:",
+    "signatureBase64": "XUpjUHt36NbHgAZrQkFY2fSNUR19tgmRlGO1dBhaZDgBv4wb55qgJf2buv3wgnTYwtT+1sH2jzSbcgG6FLGKCA==",
+    "verifyResult": "ACCEPT"
+  },
+  "crossSuiteEquivalence": {
+    "envoys": {
+      "vector": "§13 Vector 1",
+      "expectedSignatureBase64": "XUpjUHt36NbHgAZrQkFY2fSNUR19tgmRlGO1dBhaZDgBv4wb55qgJf2buv3wgnTYwtT+1sH2jzSbcgG6FLGKCA==",
+      "byteIdentical": true,
+      "note": "Substituting the Envoys §6 compact-form keyid document for this DID Document at the keyid URL yields the same signature bytes. The signature base does not include the keyid document body — only the keyid URL string. A2A-IDF verifiers and Envoys verifiers reach the same Ed25519 verify(sig, base, pubkey) call site."
+    }
+  }
+}

@@ -6,7 +6,13 @@ Implementations of A2A-IDF run the fixtures in this repository to verify byte-ma
 
 ## Status
 
-This suite is under active construction. The directory structure is fixed; fixtures land incrementally in coordination with the A2A-IDF specification cycle ([#1496](https://github.com/a2aproject/A2A/pull/1496)) and the broader four-layer alignment.
+Active construction. The directory structure is fixed; fixtures land incrementally in coordination with the A2A-IDF specification cycle ([#1496](https://github.com/a2aproject/A2A/pull/1496)) and the broader four-layer alignment.
+
+**Shipped:**
+
+- [`vectors/rfc8032-7-1.json`](./vectors/rfc8032-7-1.json) — canonical RFC 8032 §7.1 Test 1 Ed25519 keypair (PEM SPKI, raw hex, multibase, JWK).
+- [`fixtures/composition/aim-did-rfc9421/signature-alone.json`](./fixtures/composition/aim-did-rfc9421/signature-alone.json) — byte-matches [Envoys signature/v1 §13 Vector 1](https://envoys.me/specs/signature/v1) with the `keyid` URL resolving to a W3C DID Document (Ed25519VerificationKey2020 + publicKeyMultibase) instead of the Envoys compact form. This is the core interop claim of A2A-IDF §6: dual-shape keyid resolution does not change the signature bytes.
+- [`scripts/verify.mjs`](./scripts/verify.mjs) and [`scripts/verify.py`](./scripts/verify.py) — reference verifiers. Node stdlib `crypto` and Python `cryptography` only; no dependency on any A2A-IDF implementation library.
 
 | Layer | Spec | Suite |
 |---|---|---|
