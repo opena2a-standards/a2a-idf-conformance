@@ -1,7 +1,7 @@
 {
   "$schema": "https://a2a-idf.opena2a.org/schemas/fixture-composition-v1.json",
   "name": "aim-did-rfc9421/signature-alone",
-  "description": "A2A-IDF identity-framework wrap of an Envoys §13 Vector 1 wire signature. The keyid URL resolves to a W3C DID Document (Ed25519VerificationKey2020 + publicKeyMultibase) rather than the Envoys §6 compact form. Because the RFC 9421 signature base depends only on the signed components and parameters — not on the keyid document shape — the resulting signature is byte-identical to Envoys §13 Vector 1. This fixture demonstrates that a verifier implementing A2A-IDF §6 dual-shape keyid resolution can interoperate with Envoys-signed traffic without re-keying or re-signing.",
+  "description": "A2A-IDF identity-framework wrap of an Envoys §13 Vector 1 wire signature. The keyid URL resolves to a W3C DID Document (Ed25519VerificationKey2020 + publicKeyMultibase) rather than the Envoys §6 compact form. Because the RFC 9421 signature base depends only on the signed components and parameters, not on the keyid document shape, the resulting signature is byte-identical to Envoys §13 Vector 1. This fixture demonstrates that a verifier implementing A2A-IDF §6 dual-shape keyid resolution can interoperate with Envoys-signed traffic without re-keying or re-signing.",
   "spec": [
     {
       "id": "A2A-IDF",
@@ -87,7 +87,7 @@
       "vector": "§13 Vector 1",
       "expectedSignatureBase64": "XUpjUHt36NbHgAZrQkFY2fSNUR19tgmRlGO1dBhaZDgBv4wb55qgJf2buv3wgnTYwtT+1sH2jzSbcgG6FLGKCA==",
       "byteIdentical": true,
-      "note": "Substituting the Envoys §6 compact-form keyid document for this DID Document at the keyid URL yields the same signature bytes. The signature base does not include the keyid document body — only the keyid URL string. A2A-IDF verifiers and Envoys verifiers reach the same Ed25519 verify(sig, base, pubkey) call site."
+      "note": "Substituting the Envoys §6 compact-form keyid document for this DID Document at the keyid URL yields the same signature bytes. The signature base does not include the keyid document body; only the keyid URL string. A2A-IDF verifiers and Envoys verifiers reach the same Ed25519 verify(sig, base, pubkey) call site."
     }
   }
 }

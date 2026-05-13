@@ -1,0 +1,131 @@
+{
+  "$schema": "https://a2a-idf.opena2a.org/schemas/fixture-composition-v1.json",
+  "name": "aim-did-rfc9421/bilateral-receipt",
+  "description": "A2A-IDF identity-framework wrap of an Envoys §13 Vector 2 wire signature (POST /api/task with a JSON body) inside an APS bilateral-receipt envelope. The initiator's wire signature is byte-identical to Envoys §13 Vector 2 by construction (the envelope does not re-sign the wire request). The envelope adds a responder acknowledgment over a JCS-canonical receipt payload referencing the initiator's wire signature. The conformance verifier checks the wire layer (RFC 9421 + A2A-IDF §6 dual-shape keyid resolution); deeper envelope verification (responder signature over the JCS receipt) is a planned extension.",
+  "spec": [
+    {
+      "id": "A2A-IDF",
+      "ref": "https://github.com/a2aproject/A2A/pull/1496",
+      "section": "§6 Public-key resolution (dual-shape) and §8 Composition with bilateral receipts"
+    },
+    {
+      "id": "APS",
+      "ref": "https://github.com/a2aproject/A2A/issues/1575",
+      "section": "Bilateral receipt envelope"
+    },
+    {
+      "id": "Envoys signature/v1",
+      "ref": "https://envoys.me/specs/signature/v1",
+      "version": "1.4.0",
+      "specSha256": "5dcc855ecb4975e991584c2a1093fa866a027daf734166d2834a426bbc21b2e9",
+      "section": "§13 Vector 2 (POST request, JSON body)"
+    },
+    {
+      "id": "RFC 9421",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+      "section": "§2.5 Creating the Signature Base"
+    },
+    {
+      "id": "RFC 9530",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+      "section": "Content-Digest header field"
+    },
+    {
+      "id": "RFC 8785",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+      "section": "JCS canonical form (envelope payload)"
+    },
+    {
+      "id": "RFC 8032",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+      "section": "§7.1 Test 1 (Ed25519 keypair)"
+    },
+    {
+      "id": "W3C DID Core v1.0",
+      "ref": "https://www.w3.org/TR/did-core/",
+      "section": "§5.2 Verification Methods"
+    }
+  ],
+  "keypairRef": "../../vectors/rfc8032-7-1.json",
+  "input": {
+    "method": "POST",
+    "path": "/api/task",
+    "body": "{\"task\":\"summarize\",\"url\":\"https://example.com/doc\"}",
+    "bodyEncoding": "utf-8"
+  },
+  "signatureParams": {
+    "components": ["@method", "@path", "content-digest"],
+    "keyid": "https://envoys.me/agents/test@rfc8032-vec1.example",
+    "created": 1714000060,
+    "nonce": "EBESExQVFhcYGRobHB0eHw"
+  },
+  "keyidResolution": {
+    "shape": "did-json",
+    "contentType": "application/did+json",
+    "document": {
+      "@context": [
+        "https://www.w3.org/ns/did/v1",
+        "https://w3id.org/security/suites/ed25519-2020/v1"
+      ],
+      "id": "did:web:envoys.me:agents:test%40rfc8032-vec1.example",
+      "verificationMethod": [
+        {
+          "id": "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1",
+          "type": "Ed25519VerificationKey2020",
+          "controller": "did:web:envoys.me:agents:test%40rfc8032-vec1.example",
+          "publicKeyMultibase": "z6MktwupdmLXVVqTzCw4i46r4uGyosGXRnR3XjN4Zq7oMMsw"
+        }
+      ],
+      "assertionMethod": [
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1"
+      ],
+      "authentication": [
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1"
+      ]
+    }
+  },
+  "expected": {
+    "contentDigest": "sha-256=:MKfdDhv01pOYGoZ8VKY5CNdevySMUL8MqvJxVJaaWu0=:",
+    "signatureBase": "\"@method\": POST\n\"@path\": /api/task\n\"content-digest\": sha-256=:MKfdDhv01pOYGoZ8VKY5CNdevySMUL8MqvJxVJaaWu0=:\n\"@signature-params\": (\"@method\" \"@path\" \"content-digest\");keyid=\"https://envoys.me/agents/test@rfc8032-vec1.example\";created=1714000060;nonce=\"EBESExQVFhcYGRobHB0eHw\"",
+    "signatureInput": "sig1=(\"@method\" \"@path\" \"content-digest\");keyid=\"https://envoys.me/agents/test@rfc8032-vec1.example\";created=1714000060;nonce=\"EBESExQVFhcYGRobHB0eHw\"",
+    "signature": "sig1=:i5tKcOHKhRTCztR2cazuzNAg9rPiRf47MKTOGve92Rs43gNmltuN5LVScedR6C08MGsQykMc7txJ21KCG8SEBQ==:",
+    "signatureBase64": "i5tKcOHKhRTCztR2cazuzNAg9rPiRf47MKTOGve92Rs43gNmltuN5LVScedR6C08MGsQykMc7txJ21KCG8SEBQ==",
+    "verifyResult": "ACCEPT"
+  },
+  "crossSuiteEquivalence": {
+    "envoys": {
+      "vector": "§13 Vector 2",
+      "expectedSignatureBase64": "i5tKcOHKhRTCztR2cazuzNAg9rPiRf47MKTOGve92Rs43gNmltuN5LVScedR6C08MGsQykMc7txJ21KCG8SEBQ==",
+      "byteIdentical": true,
+      "note": "Wire signature is unchanged when the envelope wraps the request. The envelope contributes responder acknowledgment, not a re-sign of the wire payload. Substituting the Envoys §6 compact-form keyid document at the keyid URL yields the same wire signature bytes."
+    }
+  },
+  "envelope": {
+    "type": "aps-bilateral-receipt-v1",
+    "version": "draft-2026-05-13",
+    "ref": "https://github.com/a2aproject/A2A/issues/1575",
+    "request": {
+      "wireSignatureBase64Ref": "expected.signatureBase64",
+      "initiatorKeyid": "https://envoys.me/agents/test@rfc8032-vec1.example",
+      "initiatedAt": "2026-05-13T13:31:00Z"
+    },
+    "response": {
+      "responderKeyid": "did:web:counterparty.example:agents:receipt-test",
+      "respondedAt": "2026-05-13T13:31:02Z",
+      "status": "ACCEPTED",
+      "receiptPayloadJcs": {
+        "initiatorSignatureBase64": "i5tKcOHKhRTCztR2cazuzNAg9rPiRf47MKTOGve92Rs43gNmltuN5LVScedR6C08MGsQykMc7txJ21KCG8SEBQ==",
+        "initiatorKeyid": "https://envoys.me/agents/test@rfc8032-vec1.example",
+        "respondedAt": "2026-05-13T13:31:02Z",
+        "responderKeyid": "did:web:counterparty.example:agents:receipt-test",
+        "status": "ACCEPTED"
+      },
+      "responderSignatureNote": "Responder signs the RFC 8785 JCS-canonical form of receiptPayloadJcs using its own keyid. The signature is intentionally omitted here because the responder keypair is illustrative; the fixture's verification scope is the wire layer per A2A-IDF §6. Deeper envelope verification lands in a future suite iteration once APS receipt schemas stabilize."
+    },
+    "conformanceNotes": [
+      "Wire signature (Envoys §13 Vector 2) is byte-identical to a non-enveloped request signed with the same keypair and params.",
+      "The envelope changes the framework-layer interpretation (a bilateral receipt is a bound request+response pair) but not the wire-layer bytes.",
+      "A2A-IDF §6 dual-shape keyid resolution applies independently to initiator and responder keyids."
+    ]
+  }
+}
