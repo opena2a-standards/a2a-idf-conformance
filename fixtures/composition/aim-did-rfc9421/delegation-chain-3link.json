@@ -1,0 +1,164 @@
+{
+  "$schema": "https://a2a-idf.opena2a.org/schemas/fixture-composition-v1.json",
+  "name": "aim-did-rfc9421/delegation-chain-3link",
+  "description": "A2A-IDF identity-framework wrap of an Envoys §13 Vector 3 wire signature (POST /api/echo with an empty JSON object body) inside a 3-link APS delegation chain envelope. The wire signature is byte-identical to Envoys §13 Vector 3 by construction. The envelope adds three delegation links demonstrating the chain rules from A2A-IDF §7: scope monotonic narrowing, expiry monotonic non-increase, depth at most maxDepth (default 4), and previousSignature binding between consecutive links. The conformance verifier checks the wire layer (RFC 9421 + A2A-IDF §6 dual-shape keyid resolution); deeper chain verification (per-link signatures and rule enforcement against the link payloads' JCS form) is a planned extension.",
+  "spec": [
+    {
+      "id": "A2A-IDF",
+      "ref": "https://github.com/a2aproject/A2A/pull/1496",
+      "section": "§6 Public-key resolution (dual-shape) and §7 Delegation chains"
+    },
+    {
+      "id": "APS",
+      "ref": "https://github.com/a2aproject/A2A/issues/1575",
+      "section": "Delegation chain envelopes"
+    },
+    {
+      "id": "Envoys signature/v1",
+      "ref": "https://envoys.me/specs/signature/v1",
+      "version": "1.4.0",
+      "specSha256": "5dcc855ecb4975e991584c2a1093fa866a027daf734166d2834a426bbc21b2e9",
+      "section": "§13 Vector 3 (POST request, empty JSON object body)"
+    },
+    {
+      "id": "RFC 9421",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+      "section": "§2.5 Creating the Signature Base"
+    },
+    {
+      "id": "RFC 9530",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+      "section": "Content-Digest header field"
+    },
+    {
+      "id": "RFC 8785",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+      "section": "JCS canonical form (per-link payload)"
+    },
+    {
+      "id": "RFC 8032",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+      "section": "§7.1 Test 1 (Ed25519 keypair)"
+    },
+    {
+      "id": "W3C DID Core v1.0",
+      "ref": "https://www.w3.org/TR/did-core/",
+      "section": "§5.2 Verification Methods"
+    }
+  ],
+  "keypairRef": "../../vectors/rfc8032-7-1.json",
+  "input": {
+    "method": "POST",
+    "path": "/api/echo",
+    "body": "{}",
+    "bodyEncoding": "utf-8"
+  },
+  "signatureParams": {
+    "components": ["@method", "@path", "content-digest"],
+    "keyid": "https://envoys.me/agents/test@rfc8032-vec1.example",
+    "created": 1714000120,
+    "nonce": "ICEiIyQlJicoKSorLC0uLw"
+  },
+  "keyidResolution": {
+    "shape": "did-json",
+    "contentType": "application/did+json",
+    "document": {
+      "@context": [
+        "https://www.w3.org/ns/did/v1",
+        "https://w3id.org/security/suites/ed25519-2020/v1"
+      ],
+      "id": "did:web:envoys.me:agents:test%40rfc8032-vec1.example",
+      "verificationMethod": [
+        {
+          "id": "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1",
+          "type": "Ed25519VerificationKey2020",
+          "controller": "did:web:envoys.me:agents:test%40rfc8032-vec1.example",
+          "publicKeyMultibase": "z6MktwupdmLXVVqTzCw4i46r4uGyosGXRnR3XjN4Zq7oMMsw"
+        }
+      ],
+      "assertionMethod": [
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1"
+      ],
+      "authentication": [
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1"
+      ]
+    }
+  },
+  "expected": {
+    "contentDigest": "sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:",
+    "signatureBase": "\"@method\": POST\n\"@path\": /api/echo\n\"content-digest\": sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:\n\"@signature-params\": (\"@method\" \"@path\" \"content-digest\");keyid=\"https://envoys.me/agents/test@rfc8032-vec1.example\";created=1714000120;nonce=\"ICEiIyQlJicoKSorLC0uLw\"",
+    "signatureInput": "sig1=(\"@method\" \"@path\" \"content-digest\");keyid=\"https://envoys.me/agents/test@rfc8032-vec1.example\";created=1714000120;nonce=\"ICEiIyQlJicoKSorLC0uLw\"",
+    "signature": "sig1=:m2besJKk6Q0MIwFoTENobvvHxFan1fUTv7bzY4EB6OjfIlktqwKa7r/Ab0tDDWFGjQ0CbALgvWGcQfzDr/GeBQ==:",
+    "signatureBase64": "m2besJKk6Q0MIwFoTENobvvHxFan1fUTv7bzY4EB6OjfIlktqwKa7r/Ab0tDDWFGjQ0CbALgvWGcQfzDr/GeBQ==",
+    "verifyResult": "ACCEPT"
+  },
+  "crossSuiteEquivalence": {
+    "envoys": {
+      "vector": "§13 Vector 3",
+      "expectedSignatureBase64": "m2besJKk6Q0MIwFoTENobvvHxFan1fUTv7bzY4EB6OjfIlktqwKa7r/Ab0tDDWFGjQ0CbALgvWGcQfzDr/GeBQ==",
+      "byteIdentical": true,
+      "note": "Wire signature is unchanged when wrapped in a delegation chain envelope. The chain context is framework-layer metadata; the wire bytes remain those of Envoys §13 Vector 3."
+    }
+  },
+  "envelope": {
+    "type": "aps-delegation-chain-v1",
+    "version": "draft-2026-05-13",
+    "ref": "https://github.com/a2aproject/A2A/issues/1575",
+    "depth": 3,
+    "maxDepth": 4,
+    "links": [
+      {
+        "index": 0,
+        "type": "root",
+        "issuerKeyid": "https://envoys.me/agents/test@rfc8032-vec1.example",
+        "subjectKeyid": "did:web:counterparty.example:agents:delegate-level-1",
+        "scope": ["POST /api/echo", "POST /api/health", "GET /api/health"],
+        "issuedAt": "2026-05-01T00:00:00Z",
+        "expiresAt": "2026-12-31T00:00:00Z",
+        "linkPayloadJcsNote": "JCS canonical form of {issuerKeyid, subjectKeyid, scope, issuedAt, expiresAt, type:'root'} signed by the issuer."
+      },
+      {
+        "index": 1,
+        "type": "derived",
+        "issuerKeyid": "did:web:counterparty.example:agents:delegate-level-1",
+        "subjectKeyid": "did:web:counterparty.example:agents:delegate-level-2",
+        "scope": ["POST /api/echo", "POST /api/health"],
+        "issuedAt": "2026-05-05T00:00:00Z",
+        "expiresAt": "2026-09-30T00:00:00Z",
+        "previousSignatureRef": "links[0].signature",
+        "linkPayloadJcsNote": "JCS canonical form of {issuerKeyid, subjectKeyid, scope, issuedAt, expiresAt, previousSignature, type:'derived'} signed by the issuer."
+      },
+      {
+        "index": 2,
+        "type": "derived",
+        "issuerKeyid": "did:web:counterparty.example:agents:delegate-level-2",
+        "subjectKeyid": "https://envoys.me/agents/test@rfc8032-vec1.example",
+        "scope": ["POST /api/echo"],
+        "issuedAt": "2026-05-10T00:00:00Z",
+        "expiresAt": "2026-06-30T00:00:00Z",
+        "previousSignatureRef": "links[1].signature",
+        "linkPayloadJcsNote": "JCS canonical form of {issuerKeyid, subjectKeyid, scope, issuedAt, expiresAt, previousSignature, type:'derived'} signed by the issuer."
+      }
+    ],
+    "chainInvariants": {
+      "scopeMonotonicNarrow": true,
+      "scopeNarrowProof": "links[0].scope ⊇ links[1].scope ⊇ links[2].scope; final scope ['POST /api/echo'] matches the wire request",
+      "expiryMonotonicNonIncrease": true,
+      "expiryNonIncreaseProof": "2026-12-31 ≥ 2026-09-30 ≥ 2026-06-30",
+      "depthAtMostMaxDepth": true,
+      "depthProof": "depth=3 ≤ maxDepth=4",
+      "previousSignatureBinding": "Each derived link's previousSignature equals the prior link's signature, forming a hash-chain through Ed25519 signatures."
+    },
+    "wireRequestAuthorization": {
+      "finalScope": ["POST /api/echo"],
+      "wireRequest": "POST /api/echo",
+      "match": true,
+      "note": "The final subject (chain leaf) is the wire-signature signer; the final scope authorizes the wire request method and path."
+    },
+    "conformanceNotes": [
+      "Wire signature (Envoys §13 Vector 3) is byte-identical to a non-enveloped request signed with the same keypair and params.",
+      "Per-link signatures are intentionally omitted from this fixture; the conformance scope here is the wire layer per A2A-IDF §6. The link signatures are computed over the JCS canonical form of each link payload using the issuer's keyid; deeper verification lands in a future suite iteration once APS delegation schemas stabilize.",
+      "Real chain verification per A2A-IDF §7 enforces scope-narrow, expiry-non-increase, depth ceiling, previousSignature binding, and per-link Ed25519 signature against the resolved issuer key."
+    ]
+  }
+}
