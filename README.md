@@ -10,9 +10,9 @@ Active construction. The directory structure is fixed; fixtures land incremental
 
 **Shipped:**
 
-- [`vectors/rfc8032-7-1.json`](./vectors/rfc8032-7-1.json) — canonical RFC 8032 §7.1 Test 1 Ed25519 keypair (PEM SPKI, raw hex, multibase, JWK).
-- [`fixtures/composition/aim-did-rfc9421/signature-alone.json`](./fixtures/composition/aim-did-rfc9421/signature-alone.json) — byte-matches [Envoys signature/v1 §13 Vector 1](https://envoys.me/specs/signature/v1) with the `keyid` URL resolving to a W3C DID Document (Ed25519VerificationKey2020 + publicKeyMultibase) instead of the Envoys compact form. This is the core interop claim of A2A-IDF §6: dual-shape keyid resolution does not change the signature bytes.
-- [`scripts/verify.mjs`](./scripts/verify.mjs) and [`scripts/verify.py`](./scripts/verify.py) — reference verifiers. Node stdlib `crypto` and Python `cryptography` only; no dependency on any A2A-IDF implementation library.
+- [`vectors/rfc8032-7-1.json`](./vectors/rfc8032-7-1.json): canonical RFC 8032 §7.1 Test 1 Ed25519 keypair (PEM SPKI, raw hex, multibase, JWK).
+- [`fixtures/composition/aim-did-rfc9421/signature-alone.json`](./fixtures/composition/aim-did-rfc9421/signature-alone.json): byte-matches [Envoys signature/v1 §13 Vector 1](https://envoys.me/specs/signature/v1) with the `keyid` URL resolving to a W3C DID Document (Ed25519VerificationKey2020 + publicKeyMultibase) instead of the Envoys compact form. This is the core interop claim of A2A-IDF §6: dual-shape keyid resolution does not change the signature bytes.
+- [`scripts/verify.mjs`](./scripts/verify.mjs) and [`scripts/verify.py`](./scripts/verify.py): reference verifiers. Node stdlib `crypto` and Python `cryptography` only; no dependency on any A2A-IDF implementation library.
 
 | Layer | Spec | Suite |
 |---|---|---|
@@ -49,11 +49,26 @@ These shapes parallel the `envoys-rfc9421/` fixtures hosted in `aeoess/aps-confo
 
 ## Reference implementation
 
-[**AIM**](https://github.com/opena2a-org) is the canonical reference implementation of A2A-IDF and ships Ed25519 message signing, JCS canonicalization, and W3C DID Document resolution today. AIM does not have a privileged position in the specification — any conforming implementation may serve as the basis for cross-validation — but its production deployment is the source of the test vectors in this suite.
+[**AIM**](https://github.com/opena2a-org) is the canonical reference implementation of A2A-IDF and ships Ed25519 message signing, JCS canonicalization, and W3C DID Document resolution today. AIM does not have a privileged position in the specification (any conforming implementation may serve as the basis for cross-validation), but its production deployment is the source of the test vectors in this suite.
 
 ## Contributing
 
-Pull requests welcome. Conformance vectors must be reproducible from the documented inputs (keypair, body, parameters) and must pass the verifier in `scripts/`. Implementation-specific fixtures (Envoys, APS, CTEF, AIP, Hippo) belong in their respective home repositories; this suite is for A2A-IDF-layer vectors and cross-layer composition.
+Pull requests welcome.
+
+### Two kinds of fixtures, two homes
+
+| Fixture kind | Example | Lives in |
+|---|---|---|
+| **Implementation-only.** A wire-format implementation's own conformance vectors. | Envoys §13 Vectors 1-3 in `envoys-rfc9421/`; APS continuity vectors; CTEF envelope vectors. | The implementation's home repository. |
+| **Cross-layer composition.** An implementation's wire signature combined with A2A-IDF §6 identity-framework resolution (compact-form or DID Document), proving the signature bytes are unchanged across resolution shapes. | `aim-did-rfc9421/signature-alone.json` (Envoys §13 Vector 1 wrapped with a W3C DID Document). | **This repo**, under `fixtures/composition/<impl>-<wire-spec>/`. |
+
+If your PR wraps an existing wire-signature implementation in A2A-IDF §6 resolution to demonstrate dual-shape interoperability, it belongs here. If your PR pins your implementation's own primary vectors, those belong in your home repository and can be referenced from a composition fixture here.
+
+### Requirements
+
+1. **Reproducible from documented inputs.** Every fixture must be regenerable from its keypair, body, and parameters. Snapshot-only fixtures (signatures committed without enough information to regenerate them) are not accepted.
+2. **Passes both reference verifiers.** `node scripts/verify.mjs <fixture.json>` and `python3 scripts/verify.py <fixture.json>` must both return PASS.
+3. **Matches the schema** in [`fixtures/composition/SCHEMA.md`](./fixtures/composition/SCHEMA.md). Required fields, supported `keyidResolution` shapes, and the signature-base format are all documented there.
 
 Coordination thread: [a2aproject/A2A#1496](https://github.com/a2aproject/A2A/pull/1496).
 

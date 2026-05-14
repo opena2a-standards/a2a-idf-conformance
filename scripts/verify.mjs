@@ -10,6 +10,14 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
 
+// Content-Digest algorithms supported by this verifier (RFC 9530).
+// Fixtures may declare the expected digest with any of these prefixes;
+// the verifier picks the algorithm from the fixture's expected.contentDigest.
+const CONTENT_DIGEST_ALGORITHMS = {
+  "sha-256": "sha256",
+  "sha-512": "sha512",
+};
+
 const ED25519_SPKI_PREFIX = Buffer.from(
   "302a300506032b6570032100",
   "hex",
@@ -163,11 +171,24 @@ async function verifyFixture(path) {
   const expectedResult = (expected.verifyResult ?? "ACCEPT").toUpperCase();
 
   // Recompute Content-Digest from body — confirms the fixture is internally consistent.
+  // Algorithm is taken from the prefix of expected.contentDigest (RFC 9530).
   const bodyBytes = Buffer.from(
     fixture.input.body ?? "",
     fixture.input.bodyEncoding ?? "utf-8",
   );
-  const recomputedDigest = `sha-256=:${createHash("sha256")
+  const expectedDigest = expected.contentDigest ?? "";
+  const algMatch = expectedDigest.match(/^([a-z0-9-]+)=:/);
+  const algLabel = algMatch ? algMatch[1] : "sha-256";
+  const nodeAlg = CONTENT_DIGEST_ALGORITHMS[algLabel];
+  if (!nodeAlg) {
+    return {
+      path,
+      ok: false,
+      stage: "content-digest",
+      reason: `unsupported content-digest algorithm: ${algLabel}`,
+    };
+  }
+  const recomputedDigest = `${algLabel}=:${createHash(nodeAlg)
     .update(bodyBytes)
     .digest("base64")}:`;
   if (recomputedDigest !== expected.contentDigest) {

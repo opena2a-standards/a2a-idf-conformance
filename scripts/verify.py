@@ -16,9 +16,18 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
+
+# Content-Digest algorithms supported by this verifier (RFC 9530).
+# Fixtures may declare the expected digest with any of these prefixes;
+# the verifier picks the algorithm from the fixture's expected.contentDigest.
+CONTENT_DIGEST_ALGORITHMS = {
+    "sha-256": hashlib.sha256,
+    "sha-512": hashlib.sha512,
+}
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -188,13 +197,26 @@ def verify_fixture(path: Path) -> tuple[bool, list[str]]:
     expected = fixture.get("expected", {})
     expected_result = (expected.get("verifyResult") or "ACCEPT").upper()
 
-    # Recompute Content-Digest.
+    # Recompute Content-Digest. Algorithm is taken from the prefix of
+    # expected.contentDigest (RFC 9530).
     input_obj = fixture["input"]
     body_text = input_obj.get("body", "")
     body_encoding = input_obj.get("bodyEncoding", "utf-8")
-    body_bytes = body_text.encode(body_encoding)
-    digest = base64.b64encode(hashlib.sha256(body_bytes).digest()).decode("ascii")
-    recomputed = f"sha-256=:{digest}:"
+    if body_encoding == "base64":
+        body_bytes = base64.b64decode(body_text)
+    else:
+        body_bytes = body_text.encode(body_encoding)
+    expected_digest = expected.get("contentDigest") or ""
+    alg_match = re.match(r"^([a-z0-9-]+)=:", expected_digest)
+    alg_label = alg_match.group(1) if alg_match else "sha-256"
+    hash_fn = CONTENT_DIGEST_ALGORITHMS.get(alg_label)
+    if hash_fn is None:
+        return False, [
+            "stage:  content-digest",
+            f"reason: unsupported content-digest algorithm: {alg_label}",
+        ]
+    digest = base64.b64encode(hash_fn(body_bytes).digest()).decode("ascii")
+    recomputed = f"{alg_label}=:{digest}:"
     if recomputed != expected.get("contentDigest"):
         return False, [
             "stage:  content-digest",
