@@ -1,7 +1,7 @@
 {
   "$schema": "https://a2a-idf.opena2a.org/schemas/fixture-composition-v1.json",
   "name": "aim-did-rfc9421/delegation-chain-3link",
-  "description": "A2A-IDF identity-framework wrap of an Envoys §13 Vector 3 wire signature (POST /api/echo with an empty JSON object body) inside a 3-link APS delegation chain envelope. The wire signature is byte-identical to Envoys §13 Vector 3 by construction. The envelope adds three delegation links demonstrating the chain rules from A2A-IDF §7: scope monotonic narrowing, expiry monotonic non-increase, depth at most maxDepth (default 4), and previousSignature binding between consecutive links. The conformance verifier checks the wire layer (RFC 9421 + A2A-IDF §6 dual-shape keyid resolution); deeper chain verification (per-link signatures and rule enforcement against the link payloads' JCS form) is a planned extension.",
+  "description": "A2A-IDF identity-framework wrap of an Envoys §14 Vector 3 wire signature (POST /api/echo with an empty JSON object body) inside a 3-link APS delegation chain envelope. The wire signature is byte-identical to Envoys §14 Vector 3 by construction. The envelope adds three delegation links demonstrating the chain rules from A2A-IDF §7: scope monotonic narrowing, expiry monotonic non-increase, depth at most maxDepth (default 4), and previousSignature binding between consecutive links. The conformance verifier checks the wire layer (RFC 9421 + A2A-IDF §6 dual-shape keyid resolution); deeper chain verification (per-link signatures and rule enforcement against the link payloads' JCS form) is a planned extension.",
   "spec": [
     {
       "id": "A2A-IDF",
@@ -16,9 +16,9 @@
     {
       "id": "Envoys signature/v1",
       "ref": "https://envoys.me/specs/signature/v1",
-      "version": "1.4.0",
-      "specSha256": "5dcc855ecb4975e991584c2a1093fa866a027daf734166d2834a426bbc21b2e9",
-      "section": "§13 Vector 3 (POST request, empty JSON object body)"
+      "version": "1.5.1",
+      "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+      "section": "§14 Vector 3 (POST request, empty JSON object body)"
     },
     {
       "id": "RFC 9421",
@@ -74,13 +74,25 @@
           "type": "Ed25519VerificationKey2020",
           "controller": "did:web:envoys.me:agents:test%40rfc8032-vec1.example",
           "publicKeyMultibase": "z6MktwupdmLXVVqTzCw4i46r4uGyosGXRnR3XjN4Zq7oMMsw"
+        },
+        {
+          "id": "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-2",
+          "type": "JsonWebKey2020",
+          "controller": "did:web:envoys.me:agents:test%40rfc8032-vec1.example",
+          "publicKeyJwk": {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
+          }
         }
       ],
       "assertionMethod": [
-        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1"
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1",
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-2"
       ],
       "authentication": [
-        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1"
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1",
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-2"
       ]
     }
   },
@@ -94,10 +106,10 @@
   },
   "crossSuiteEquivalence": {
     "envoys": {
-      "vector": "§13 Vector 3",
+      "vector": "§14 Vector 3",
       "expectedSignatureBase64": "m2besJKk6Q0MIwFoTENobvvHxFan1fUTv7bzY4EB6OjfIlktqwKa7r/Ab0tDDWFGjQ0CbALgvWGcQfzDr/GeBQ==",
       "byteIdentical": true,
-      "note": "Wire signature is unchanged when wrapped in a delegation chain envelope. The chain context is framework-layer metadata; the wire bytes remain those of Envoys §13 Vector 3."
+      "note": "Wire signature is unchanged when wrapped in a delegation chain envelope. The chain context is framework-layer metadata; the wire bytes remain those of Envoys §14 Vector 3."
     }
   },
   "envelope": {
@@ -156,7 +168,7 @@
       "note": "The final subject (chain leaf) is the wire-signature signer; the final scope authorizes the wire request method and path."
     },
     "conformanceNotes": [
-      "Wire signature (Envoys §13 Vector 3) is byte-identical to a non-enveloped request signed with the same keypair and params.",
+      "Wire signature (Envoys §14 Vector 3) is byte-identical to a non-enveloped request signed with the same keypair and params.",
       "Per-link signatures are intentionally omitted from this fixture; the conformance scope here is the wire layer per A2A-IDF §6. The link signatures are computed over the JCS canonical form of each link payload using the issuer's keyid; deeper verification lands in a future suite iteration once APS delegation schemas stabilize.",
       "Real chain verification per A2A-IDF §7 enforces scope-narrow, expiry-non-increase, depth ceiling, previousSignature binding, and per-link Ed25519 signature against the resolved issuer key."
     ]

@@ -1,7 +1,7 @@
 {
   "$schema": "https://a2a-idf.opena2a.org/schemas/fixture-composition-v1.json",
   "name": "aim-did-rfc9421/bilateral-receipt",
-  "description": "A2A-IDF identity-framework wrap of an Envoys §13 Vector 2 wire signature (POST /api/task with a JSON body) inside an APS bilateral-receipt envelope. The initiator's wire signature is byte-identical to Envoys §13 Vector 2 by construction (the envelope does not re-sign the wire request). The envelope adds a responder acknowledgment over a JCS-canonical receipt payload referencing the initiator's wire signature. The conformance verifier checks the wire layer (RFC 9421 + A2A-IDF §6 dual-shape keyid resolution); deeper envelope verification (responder signature over the JCS receipt) is a planned extension.",
+  "description": "A2A-IDF identity-framework wrap of an Envoys §14 Vector 2 wire signature (POST /api/task with a JSON body) inside an APS bilateral-receipt envelope. The initiator's wire signature is byte-identical to Envoys §14 Vector 2 by construction (the envelope does not re-sign the wire request). The envelope adds a responder acknowledgment over a JCS-canonical receipt payload referencing the initiator's wire signature. The conformance verifier checks the wire layer (RFC 9421 + A2A-IDF §6 dual-shape keyid resolution); deeper envelope verification (responder signature over the JCS receipt) is a planned extension.",
   "spec": [
     {
       "id": "A2A-IDF",
@@ -16,9 +16,9 @@
     {
       "id": "Envoys signature/v1",
       "ref": "https://envoys.me/specs/signature/v1",
-      "version": "1.4.0",
-      "specSha256": "5dcc855ecb4975e991584c2a1093fa866a027daf734166d2834a426bbc21b2e9",
-      "section": "§13 Vector 2 (POST request, JSON body)"
+      "version": "1.5.1",
+      "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+      "section": "§14 Vector 2 (POST request, JSON body)"
     },
     {
       "id": "RFC 9421",
@@ -74,13 +74,25 @@
           "type": "Ed25519VerificationKey2020",
           "controller": "did:web:envoys.me:agents:test%40rfc8032-vec1.example",
           "publicKeyMultibase": "z6MktwupdmLXVVqTzCw4i46r4uGyosGXRnR3XjN4Zq7oMMsw"
+        },
+        {
+          "id": "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-2",
+          "type": "JsonWebKey2020",
+          "controller": "did:web:envoys.me:agents:test%40rfc8032-vec1.example",
+          "publicKeyJwk": {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
+          }
         }
       ],
       "assertionMethod": [
-        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1"
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1",
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-2"
       ],
       "authentication": [
-        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1"
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1",
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-2"
       ]
     }
   },
@@ -94,7 +106,7 @@
   },
   "crossSuiteEquivalence": {
     "envoys": {
-      "vector": "§13 Vector 2",
+      "vector": "§14 Vector 2",
       "expectedSignatureBase64": "i5tKcOHKhRTCztR2cazuzNAg9rPiRf47MKTOGve92Rs43gNmltuN5LVScedR6C08MGsQykMc7txJ21KCG8SEBQ==",
       "byteIdentical": true,
       "note": "Wire signature is unchanged when the envelope wraps the request. The envelope contributes responder acknowledgment, not a re-sign of the wire payload. Substituting the Envoys §6 compact-form keyid document at the keyid URL yields the same wire signature bytes."
@@ -123,7 +135,7 @@
       "responderSignatureNote": "Responder signs the RFC 8785 JCS-canonical form of receiptPayloadJcs using its own keyid. The signature is intentionally omitted here because the responder keypair is illustrative; the fixture's verification scope is the wire layer per A2A-IDF §6. Deeper envelope verification lands in a future suite iteration once APS receipt schemas stabilize."
     },
     "conformanceNotes": [
-      "Wire signature (Envoys §13 Vector 2) is byte-identical to a non-enveloped request signed with the same keypair and params.",
+      "Wire signature (Envoys §14 Vector 2) is byte-identical to a non-enveloped request signed with the same keypair and params.",
       "The envelope changes the framework-layer interpretation (a bilateral receipt is a bound request+response pair) but not the wire-layer bytes.",
       "A2A-IDF §6 dual-shape keyid resolution applies independently to initiator and responder keyids."
     ]
