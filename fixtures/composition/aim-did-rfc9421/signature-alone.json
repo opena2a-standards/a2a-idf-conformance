@@ -1,7 +1,7 @@
 {
   "$schema": "https://a2a-idf.opena2a.org/schemas/fixture-composition-v1.json",
   "name": "aim-did-rfc9421/signature-alone",
-  "description": "A2A-IDF identity-framework wrap of an Envoys §13 Vector 1 wire signature. The keyid URL resolves to a W3C DID Document (Ed25519VerificationKey2020 + publicKeyMultibase) rather than the Envoys §6 compact form. Because the RFC 9421 signature base depends only on the signed components and parameters, not on the keyid document shape, the resulting signature is byte-identical to Envoys §13 Vector 1. This fixture demonstrates that a verifier implementing A2A-IDF §6 dual-shape keyid resolution can interoperate with Envoys-signed traffic without re-keying or re-signing.",
+  "description": "A2A-IDF identity-framework wrap of an Envoys §14 Vector 1 wire signature. The keyid URL resolves to a W3C DID Document (Ed25519VerificationKey2020 + publicKeyMultibase) rather than the Envoys §6 compact form. Because the RFC 9421 signature base depends only on the signed components and parameters, not on the keyid document shape, the resulting signature is byte-identical to Envoys §14 Vector 1. This fixture demonstrates that a verifier implementing A2A-IDF §6 dual-shape keyid resolution can interoperate with Envoys-signed traffic without re-keying or re-signing.",
   "spec": [
     {
       "id": "A2A-IDF",
@@ -11,9 +11,9 @@
     {
       "id": "Envoys signature/v1",
       "ref": "https://envoys.me/specs/signature/v1",
-      "version": "1.4.0",
-      "specSha256": "5dcc855ecb4975e991584c2a1093fa866a027daf734166d2834a426bbc21b2e9",
-      "section": "§13 Vector 1 (GET request, no body)"
+      "version": "1.5.1",
+      "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+      "section": "§14 Vector 1 (GET request, no body)"
     },
     {
       "id": "RFC 9421",
@@ -64,13 +64,25 @@
           "type": "Ed25519VerificationKey2020",
           "controller": "did:web:envoys.me:agents:test%40rfc8032-vec1.example",
           "publicKeyMultibase": "z6MktwupdmLXVVqTzCw4i46r4uGyosGXRnR3XjN4Zq7oMMsw"
+        },
+        {
+          "id": "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-2",
+          "type": "JsonWebKey2020",
+          "controller": "did:web:envoys.me:agents:test%40rfc8032-vec1.example",
+          "publicKeyJwk": {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
+          }
         }
       ],
       "assertionMethod": [
-        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1"
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1",
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-2"
       ],
       "authentication": [
-        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1"
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1",
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-2"
       ]
     }
   },
@@ -84,7 +96,7 @@
   },
   "crossSuiteEquivalence": {
     "envoys": {
-      "vector": "§13 Vector 1",
+      "vector": "§14 Vector 1",
       "expectedSignatureBase64": "XUpjUHt36NbHgAZrQkFY2fSNUR19tgmRlGO1dBhaZDgBv4wb55qgJf2buv3wgnTYwtT+1sH2jzSbcgG6FLGKCA==",
       "byteIdentical": true,
       "note": "Substituting the Envoys §6 compact-form keyid document for this DID Document at the keyid URL yields the same signature bytes. The signature base does not include the keyid document body; only the keyid URL string. A2A-IDF verifiers and Envoys verifiers reach the same Ed25519 verify(sig, base, pubkey) call site."

@@ -150,3 +150,9 @@ Before opening a PR:
 - [ ] The keypair is either RFC 8032 §7.1 (referenced via `keypairRef`) or an independent test keypair whose private key is documented in the source repo
 - [ ] The body is the real bytes that produce the embedded content-digest, not a placeholder
 - [ ] If wrapping an existing wire-signature implementation's vector, `crossSuiteEquivalence` declares the byte-match claim explicitly
+
+## Known cross-suite variations
+
+Some fixture-level details vary across cross-suite composition without affecting byte-match validation. Documented variations:
+
+- **`did:web` id form.** The `aim-did-rfc9421` fixtures use the URL-encoded form `did:web:envoys.me:agents:test%40rfc8032-vec1.example`. Envoys §6 vec-6 uses the keyid URL directly. Both forms are conformant per A2A-IDF §6.1 and produce the same wire signature, because the keyid document body does not enter the signature base.
