@@ -3,11 +3,19 @@
 // Pure Node stdlib — no third-party dependencies. Runs on Node ≥ 18
 // (Node ships Ed25519 verification through OpenSSL via crypto.verify).
 //
-// Usage:  node verify.mjs <fixture.json> [<fixture.json> ...]
-// Exit code: 0 if every fixture's verifyResult expectation is met, else 1.
+// Handles both fixture families:
+//   - composition fixtures (fixtures/composition/**): RFC 9421 wire signature
+//     + A2A-IDF §6 dual-shape keyid resolution
+//   - level fixtures (fixtures/levels/**): A2A-IDF §1 verification levels
+//     (SELF_ASSERTED / DOMAIN_VERIFIED / ORGANIZATION_VERIFIED)
+//
+// Usage:  node verify.mjs <fixture.json | directory> [...]
+// Directories are walked recursively for *.json fixtures.
+// Exit code: 0 if every fixture's expected verdict (and reject category,
+// when pinned) is met, else 1.
 
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { resolve, join } from "node:path";
 import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
 
 // Content-Digest algorithms supported by this verifier (RFC 9530).
@@ -25,6 +33,11 @@ const ED25519_SPKI_PREFIX = Buffer.from(
 const MULTICODEC_ED25519_PUB = Buffer.from("ed01", "hex");
 const BASE58_ALPHABET =
   "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+const IDENTITY_EXTENSION_URI = "https://a2a-protocol.org/extensions/agent-identity";
+const IDENTITY_LEVELS = ["SELF_ASSERTED", "DOMAIN_VERIFIED", "ORGANIZATION_VERIFIED"];
+const AGENT_ID_URN_RE = /^urn:a2a:agent:[A-Za-z0-9.-]+:[A-Za-z0-9._~-]+:[A-Za-z0-9._~-]+$/;
+const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 
 function base58btcDecode(s) {
   if (s.length === 0) return new Uint8Array(0);
@@ -165,10 +178,36 @@ function parseSignatureHeader(header) {
   return Buffer.from(header.slice(6, -1), "base64");
 }
 
-async function verifyFixture(path) {
-  const fixture = JSON.parse(readFileSync(path, "utf-8"));
-  const expected = fixture.expected;
+// Gate a fixture's observed verdict/category against its pinned expectation.
+function gateVerdict(path, expected, verdict, category) {
   const expectedResult = (expected.verifyResult ?? "ACCEPT").toUpperCase();
+  const expectedCategory = expected.rejectCategory ?? null;
+  const observed = verdict === "ACCEPT" ? "ACCEPT" : `REJECT[${category}]`;
+  if (verdict !== expectedResult) {
+    return {
+      path,
+      ok: false,
+      observed,
+      stage: "verdict",
+      reason: `verify result ${observed} != expected ${expectedResult}`,
+    };
+  }
+  if (verdict === "REJECT" && expectedCategory !== null && category !== expectedCategory) {
+    return {
+      path,
+      ok: false,
+      observed,
+      stage: "reject-category",
+      reason: `reject category ${category} != expected ${expectedCategory}`,
+    };
+  }
+  return { path, ok: true, observed };
+}
+
+// --- composition fixtures (RFC 9421 wire layer + §6 keyid resolution) ----------
+
+function verifyCompositionFixture(fixture, path) {
+  const expected = fixture.expected;
 
   // Recompute Content-Digest from body — confirms the fixture is internally consistent.
   // Algorithm is taken from the prefix of expected.contentDigest (RFC 9530).
@@ -248,15 +287,12 @@ async function verifyFixture(path) {
   const baseBytes = Buffer.from(base, "utf-8");
   const ok = cryptoVerify(null, baseBytes, publicKey, sigBytes);
 
-  const actualResult = ok ? "ACCEPT" : "REJECT";
-  if (actualResult !== expectedResult) {
-    return {
-      path,
-      ok: false,
-      stage: "ed25519-verify",
-      reason: `verify result ${actualResult} != expected ${expectedResult}`,
-    };
-  }
+  // The only modeled negative outcome at the wire layer is a signature that
+  // fails to verify against the resolved key — whether tampered bytes, a
+  // substituted key, or a tampered body (content-digest is a signed component).
+  const verdict = ok ? "ACCEPT" : "REJECT";
+  const gate = gateVerdict(path, expected, verdict, "SIGNATURE_INVALID");
+  if (!gate.ok) return gate;
 
   // Bonus: cross-suite byte-match check, if declared.
   const cse = fixture.crossSuiteEquivalence?.envoys;
@@ -265,32 +301,241 @@ async function verifyFixture(path) {
       return {
         path,
         ok: false,
+        observed: gate.observed,
         stage: "cross-suite-equivalence",
         reason: `fixture signature does not byte-match Envoys ${cse.vector}`,
       };
     }
   }
 
-  return { path, ok: true };
+  return gate;
 }
 
-async function main() {
+// --- level fixtures (A2A-IDF §1 verification levels) ----------------------------
+
+function b64urlDecode(s) {
+  return Buffer.from(s, "base64url");
+}
+
+function b64urlNoPad(buf) {
+  return Buffer.from(buf).toString("base64url");
+}
+
+// Minimal RFC 8785 (JCS) for the restricted value domain used by level
+// fixtures: objects, arrays, and strings only (no numbers, booleans, null).
+// Within that domain, sorted-key compact JSON is exactly the JCS form.
+function jcs(value) {
+  if (Array.isArray(value)) return `[${value.map(jcs).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const keys = Object.keys(value).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${jcs(value[k])}`).join(",")}}`;
+  }
+  if (typeof value === "string") return JSON.stringify(value);
+  throw new Error(`value type outside the fixture JCS domain: ${typeof value}`);
+}
+
+function isNonEmptyString(v) {
+  return typeof v === "string" && v.length > 0;
+}
+
+function ed25519KeyFromJwk(jwk) {
+  if (
+    !jwk ||
+    jwk.kty !== "OKP" ||
+    jwk.crv !== "Ed25519" ||
+    !isNonEmptyString(jwk.x) ||
+    b64urlDecode(jwk.x).length !== 32
+  ) {
+    return null;
+  }
+  return createPublicKey({
+    key: { kty: "OKP", crv: "Ed25519", x: jwk.x },
+    format: "jwk",
+  });
+}
+
+function hostnameOf(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function reject(category, reason) {
+  return { verdict: "REJECT", category, reason };
+}
+
+// Evaluate the identity declaration. Returns {verdict, category, reason}.
+// The check order is part of the cross-implementation contract: shape first,
+// then per-level binding checks, then cryptography, then validity window.
+function evaluateIdentity(fixture) {
+  const card = fixture.agentCard;
+  const extensions = card?.capabilities?.extensions;
+  if (!Array.isArray(extensions)) {
+    return reject("SHAPE_INVALID", "agentCard.capabilities.extensions missing");
+  }
+  const ext = extensions.find((e) => e?.uri === IDENTITY_EXTENSION_URI);
+  if (!ext || typeof ext.params !== "object" || ext.params === null) {
+    return reject("SHAPE_INVALID", "agent-identity extension (or its params) missing");
+  }
+  const p = ext.params;
+  if (!IDENTITY_LEVELS.includes(p.identityLevel)) {
+    return reject("SHAPE_INVALID", `unknown identityLevel: ${p.identityLevel}`);
+  }
+  if (p.agentId !== undefined && !(typeof p.agentId === "string" && AGENT_ID_URN_RE.test(p.agentId))) {
+    return reject("SHAPE_INVALID", `agentId is not a urn:a2a:agent:{domain}:{agent-name}:{version} URN: ${p.agentId}`);
+  }
+  const pk = p.publicKey;
+  if (!pk || ed25519KeyFromJwk(pk) === null || !isNonEmptyString(pk.kid)) {
+    return reject("SHAPE_INVALID", "publicKey is not an Ed25519 OKP JWK with a kid");
+  }
+
+  if (p.identityLevel === "SELF_ASSERTED") {
+    // Level 0 makes no verifiable claim beyond well-formedness. A conforming
+    // client MUST NOT treat the agent as verified (Security Considerations).
+    return { verdict: "ACCEPT" };
+  }
+  if (p.identityLevel === "DOMAIN_VERIFIED") {
+    return evaluateDomainVerified(fixture, card, p, pk);
+  }
+  return evaluateOrganizationVerified(fixture, p, pk);
+}
+
+function evaluateDomainVerified(fixture, card, p, pk) {
+  const att = (p.attestations ?? []).find((a) => a?.type === "domain");
+  if (!att) return reject("SHAPE_INVALID", "DOMAIN_VERIFIED requires a domain attestation");
+  if (!isNonEmptyString(p.agentId)) {
+    return reject("SHAPE_INVALID", "DOMAIN_VERIFIED requires an agentId");
+  }
+  const domain = hostnameOf(card.provider?.url);
+  if (domain === null) return reject("SHAPE_INVALID", "provider.url missing or unparseable");
+  if (att.domain !== domain) {
+    return reject("DOMAIN_MISMATCH", `attestation domain ${att.domain} != provider domain ${domain}`);
+  }
+  const dnsTxt = fixture.evidence?.dnsTxt;
+  if (!dnsTxt || !isNonEmptyString(dnsTxt.recordName) || !isNonEmptyString(dnsTxt.recordValue)) {
+    return reject("SHAPE_INVALID", "evidence.dnsTxt.{recordName,recordValue} missing");
+  }
+  if (dnsTxt.recordName !== `_a2a-identity.${domain}`) {
+    return reject("DOMAIN_MISMATCH", `record name ${dnsTxt.recordName} != _a2a-identity.${domain}`);
+  }
+  const fields = {};
+  for (const part of dnsTxt.recordValue.split("; ")) {
+    const eq = part.indexOf("=");
+    if (eq > 0) fields[part.slice(0, eq)] = part.slice(eq + 1);
+  }
+  if (fields.v !== "a2a1") return reject("SHAPE_INVALID", `unsupported record version: ${fields.v}`);
+  const urnParts = p.agentId.split(":");
+  if (urnParts[3] !== domain) {
+    return reject("DOMAIN_MISMATCH", `agentId domain ${urnParts[3]} != provider domain ${domain}`);
+  }
+  if (fields.agent !== urnParts[4]) {
+    return reject("AGENT_MISMATCH", `record agent ${fields.agent} != agentId name ${urnParts[4]}`);
+  }
+  if (fields.kid !== pk.kid) {
+    return reject("KID_MISMATCH", `record kid ${fields.kid} != declared kid ${pk.kid}`);
+  }
+  const fp = b64urlNoPad(createHash("sha256").update(b64urlDecode(pk.x)).digest());
+  if (fields.fp !== fp) {
+    return reject("FINGERPRINT_MISMATCH", `record fp ${fields.fp} != computed ${fp}`);
+  }
+  return { verdict: "ACCEPT" };
+}
+
+function evaluateOrganizationVerified(fixture, p, pk) {
+  const att = (p.attestations ?? []).find((a) => a?.type === "organization");
+  if (!att) return reject("SHAPE_INVALID", "ORGANIZATION_VERIFIED requires an organization attestation");
+  const shapeOk =
+    att.issuer && isNonEmptyString(att.issuer.name) && isNonEmptyString(att.issuer.kid) &&
+    isNonEmptyString(att.issuer.url) &&
+    att.subject && isNonEmptyString(att.subject.organization) &&
+    isNonEmptyString(att.subject.agentId) && isNonEmptyString(att.subject.kid) &&
+    TIMESTAMP_RE.test(att.verifiedAt ?? "") && TIMESTAMP_RE.test(att.expiresAt ?? "") &&
+    isNonEmptyString(att.signature);
+  if (!shapeOk) return reject("SHAPE_INVALID", "organization attestation is missing required fields");
+  if (att.subject.agentId !== p.agentId || att.subject.kid !== pk.kid) {
+    return reject("SUBJECT_MISMATCH", "attestation subject does not bind to the declared agentId/kid");
+  }
+  const ev = fixture.evidence ?? {};
+  const issuerKey = ed25519KeyFromJwk(ev.issuerPublicKey);
+  if (issuerKey === null || !TIMESTAMP_RE.test(ev.validationTime ?? "")) {
+    return reject("SHAPE_INVALID", "evidence.{issuerPublicKey,validationTime} missing or malformed");
+  }
+  const unsigned = { ...att };
+  delete unsigned.signature;
+  const tbs = Buffer.from(jcs(unsigned), "utf-8");
+  const sig = b64urlDecode(att.signature);
+  if (sig.length !== 64 || !cryptoVerify(null, tbs, issuerKey, sig)) {
+    return reject("SIGNATURE_INVALID", "registry signature does not verify over the attestation JCS form");
+  }
+  // Timestamps share the fixed YYYY-MM-DDTHH:MM:SSZ format (enforced above),
+  // so lexicographic comparison is chronological comparison.
+  if (ev.validationTime < att.verifiedAt) {
+    return reject("NOT_YET_VALID", `validationTime ${ev.validationTime} precedes verifiedAt ${att.verifiedAt}`);
+  }
+  if (ev.validationTime > att.expiresAt) {
+    return reject("EXPIRED", `validationTime ${ev.validationTime} past expiresAt ${att.expiresAt}`);
+  }
+  return { verdict: "ACCEPT" };
+}
+
+function verifyLevelFixture(fixture, path) {
+  const observed = evaluateIdentity(fixture);
+  const gate = gateVerdict(path, fixture.expected ?? {}, observed.verdict, observed.category);
+  if (!gate.ok && observed.reason && !gate.reason.includes(observed.reason)) {
+    gate.reason += ` (${observed.reason})`;
+  }
+  return gate;
+}
+
+// --- driver ---------------------------------------------------------------------
+
+function verifyFixture(path) {
+  const fixture = JSON.parse(readFileSync(path, "utf-8"));
+  if (fixture.agentCard !== undefined) return verifyLevelFixture(fixture, path);
+  return verifyCompositionFixture(fixture, path);
+}
+
+function collectFixtures(arg) {
+  const abs = resolve(arg);
+  if (!statSync(abs).isDirectory()) return [abs];
+  const out = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir).sort()) {
+      const p = join(dir, entry);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (p.endsWith(".json")) out.push(p);
+    }
+  };
+  walk(abs);
+  return out;
+}
+
+function main() {
   const args = process.argv.slice(2);
   if (args.length === 0) {
-    console.error("usage: node verify.mjs <fixture.json> [<fixture.json> ...]");
+    console.error("usage: node verify.mjs <fixture.json | directory> [...]");
     process.exit(2);
   }
 
-  let allOk = true;
-  for (const arg of args) {
-    const abs = resolve(arg);
+  const paths = args.flatMap(collectFixtures);
+  let passCount = 0;
+  let failCount = 0;
+  for (const abs of paths) {
     try {
-      const result = await verifyFixture(abs);
+      const result = verifyFixture(abs);
       if (result.ok) {
+        passCount++;
         console.log(`PASS  ${abs}`);
       } else {
-        allOk = false;
+        failCount++;
         console.log(`FAIL  ${abs}`);
+      }
+      if (result.observed !== undefined) {
+        console.log(`      observed: ${result.observed}`);
+      }
+      if (!result.ok) {
         console.log(`      stage:  ${result.stage}`);
         console.log(`      reason: ${result.reason}`);
         if (result.reconstructed !== undefined) {
@@ -299,12 +544,13 @@ async function main() {
         }
       }
     } catch (err) {
-      allOk = false;
+      failCount++;
       console.log(`ERROR ${abs}`);
       console.log(`      ${err.stack ?? err.message}`);
     }
   }
-  process.exit(allOk ? 0 : 1);
+  console.log(`summary: ${passCount} pass, ${failCount} fail (${paths.length} fixtures)`);
+  process.exit(failCount === 0 ? 0 : 1);
 }
 
-await main();
+main();

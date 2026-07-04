@@ -112,6 +112,7 @@ Use when the `keyid` URL would return a W3C DID Document at `application/did+jso
 | `signature` | yes | RFC 9421 `Signature` header value: `sig1=:<base64>:`. |
 | `signatureBase64` | yes | The base64 signature, naked (no `sig1=:` wrapping). Used by `crossSuiteEquivalence` byte-match checks. |
 | `verifyResult` | no | `ACCEPT` (default) or `REJECT`. Use `REJECT` for negative-path fixtures asserting that a particular malformation must be rejected. |
+| `rejectCategory` | REJECT fixtures | Machine-readable reject category the verifier must observe. At the wire layer the only modeled category is `SIGNATURE_INVALID` — tampered signature bytes, a substituted key, and a tampered body (content-digest is a signed component) all surface as an Ed25519 verification failure against the resolved key. A negative fixture must be valid at every stage before that check (digest, base, Signature-Input, key extraction), so a verifier that rejects for the wrong reason fails the fixture. |
 
 ### Exact `signatureBase` format
 
@@ -131,7 +132,7 @@ Declare a byte-match relationship with another conformance suite's published vec
 ```jsonc
 {
   "envoys": {
-    "vector": "§13 Vector 1",
+    "vector": "§14 Vector 1",
     "expectedSignatureBase64": "XUpjUHt36N...",
     "byteIdentical": true,
     "note": "..."
@@ -145,6 +146,7 @@ When `byteIdentical: true`, the verifier asserts that `expected.signatureBase64`
 
 Before opening a PR:
 
+- [ ] The fixture is emitted by `scripts/generate-fixtures.mjs` (add your generation code there and rerun it — CI regenerates the set and fails on any byte difference, so hand-edited fixtures cannot merge)
 - [ ] `node scripts/verify.mjs <fixture.json>` returns `PASS`
 - [ ] `python3 scripts/verify.py <fixture.json>` returns `PASS`
 - [ ] The keypair is either RFC 8032 §7.1 (referenced via `keypairRef`) or an independent test keypair whose private key is documented in the source repo

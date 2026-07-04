@@ -1,0 +1,81 @@
+{
+  "$schema": "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+  "name": "levels/level-2-attestation-tampered",
+  "description": "Negative fixture: the ORGANIZATION_VERIFIED attestation with subject.organization altered AFTER signing (Example Corp → Wrong Corp). The signature was produced over the original JCS form, so it no longer verifies against the modified content. A conforming verifier MUST reject. Models post-issuance modification of a registry attestation.",
+  "spec": [
+    {
+      "id": "A2A-IDF",
+      "ref": "https://github.com/a2aproject/A2A/pull/1496",
+      "section": "§1 Organization Verification (attestation integrity)"
+    },
+    {
+      "id": "RFC 8785",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+      "section": "JCS canonical form (attestation signing input)"
+    },
+    {
+      "id": "RFC 8032",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+      "section": "§7.1 Test 2 (registry issuer key)"
+    }
+  ],
+  "level": 2,
+  "agentCard": {
+    "name": "financial-advisor-agent",
+    "provider": {
+      "organization": "Example Corp",
+      "url": "https://example.com"
+    },
+    "capabilities": {
+      "extensions": [
+        {
+          "uri": "https://a2a-protocol.org/extensions/agent-identity",
+          "description": "Agent identity verification and trust signals",
+          "required": false,
+          "params": {
+            "version": "1.0.0",
+            "identityLevel": "ORGANIZATION_VERIFIED",
+            "agentId": "urn:a2a:agent:example.com:financial-advisor:v2",
+            "publicKey": {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+              "kid": "agent-a1b2c3d4"
+            },
+            "attestations": [
+              {
+                "type": "organization",
+                "issuer": {
+                  "name": "A2A Trust Registry",
+                  "kid": "registry-x1y2z3",
+                  "url": "https://trust.a2a-registry.org"
+                },
+                "subject": {
+                  "organization": "Wrong Corp",
+                  "agentId": "urn:a2a:agent:example.com:financial-advisor:v2",
+                  "kid": "agent-a1b2c3d4"
+                },
+                "verifiedAt": "2026-02-17T00:00:00Z",
+                "expiresAt": "2027-02-17T00:00:00Z",
+                "signature": "dAmF_ksAgJG3CYFkqiCMzgmKEfGMMjbzQ8MG8XPqGzE1H4vLJx8P_jyrMRPg-JhVbYxlr-xu253VA3_daPCDDQ"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "evidence": {
+    "issuerPublicKey": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "PUAXw-hDiVqStwqnTRt-vJyYLM8uxJaMwM1V8Sr0Zgw",
+      "kid": "registry-x1y2z3"
+    },
+    "validationTime": "2026-07-03T00:00:00Z"
+  },
+  "expected": {
+    "verifyResult": "REJECT",
+    "rejectCategory": "SIGNATURE_INVALID"
+  }
+}

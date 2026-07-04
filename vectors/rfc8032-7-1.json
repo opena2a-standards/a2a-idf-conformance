@@ -1,7 +1,7 @@
 {
-  "$schema": "https://a2a-idf.opena2a.org/schemas/vector-keypair-v1.json",
+  "$schema": "https://a2a-idf.opena2a.org/schemas/keypair-vector-v1.json",
   "name": "rfc8032-7-1",
-  "description": "Ed25519 keypair pinned to RFC 8032 §7.1 Test 1. Shared across the A2A-IDF conformance suite, the Envoys signature/v1 spec §13 reproducible vectors, and the aps-conformance-suite composition fixtures so verifiers can demonstrate byte-match parity across implementations.",
+  "description": "Ed25519 keypair pinned to RFC 8032 §7.1 Test 1. Canonical agent signing keypair shared across this suite, the Envoys signature/v1 §14 reproducible vectors, and the aps-conformance-suite composition fixtures, so verifiers can demonstrate byte-match parity across implementations. The encoded forms below are all derivations of the same 32-byte public key and 32-byte private seed; the generator recomputes them from the seed on every run.",
   "source": {
     "rfc": "RFC 8032",
     "section": "§7.1",
@@ -9,38 +9,26 @@
     "url": "https://datatracker.ietf.org/doc/html/rfc8032#section-7.1"
   },
   "warning": "These keys are published in RFC 8032 itself and are for cross-implementation verification only. They MUST NOT be used to sign anything in any production deployment.",
-  "algorithm": "Ed25519",
-  "privateKey": {
-    "encoding": "hex",
-    "value": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"
-  },
-  "publicKey": {
-    "raw": {
-      "encoding": "hex",
-      "value": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
-    },
-    "spki": {
-      "encoding": "pem",
-      "value": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n"
-    },
-    "multibase": {
-      "encoding": "multibase(base58btc) over multicodec(0xed01) || raw",
-      "value": "z6MktwupdmLXVVqTzCw4i46r4uGyosGXRnR3XjN4Zq7oMMsw"
-    },
-    "jwk": {
+  "public": {
+    "rawHex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+    "rawBase64": "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=",
+    "pemSpki": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+    "publicKeyMultibase": "z6MktwupdmLXVVqTzCw4i46r4uGyosGXRnR3XjN4Zq7oMMsw",
+    "publicKeyJwk": {
       "kty": "OKP",
       "crv": "Ed25519",
       "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
     }
   },
-  "crossReferences": [
-    {
-      "name": "envoys-signature-v1",
-      "spec": "https://envoys.me/specs/signature/v1",
-      "version": "1.4.0",
-      "specSha256": "5dcc855ecb4975e991584c2a1093fa866a027daf734166d2834a426bbc21b2e9",
-      "section": "§13 Test Vectors",
-      "use": "Composes A2A-IDF identity-framework wrap over Envoys wire signatures using this keypair."
+  "private": {
+    "rawHex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+    "rawBase64": "nWGxne/9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A=",
+    "pemPkcs8": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIJ1hsZ3v/VpguoRK9JLsLMREScVpezJpGXA7rAMcrn9g\n-----END PRIVATE KEY-----\n",
+    "privateKeyJwk": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+      "d": "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A"
     }
-  ]
+  }
 }

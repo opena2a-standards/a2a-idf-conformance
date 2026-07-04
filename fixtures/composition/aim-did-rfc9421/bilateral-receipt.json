@@ -46,7 +46,7 @@
       "section": "§5.2 Verification Methods"
     }
   ],
-  "keypairRef": "../../vectors/rfc8032-7-1.json",
+  "keypairRef": "../../../vectors/rfc8032-7-1.json",
   "input": {
     "method": "POST",
     "path": "/api/task",
@@ -54,7 +54,11 @@
     "bodyEncoding": "utf-8"
   },
   "signatureParams": {
-    "components": ["@method", "@path", "content-digest"],
+    "components": [
+      "@method",
+      "@path",
+      "content-digest"
+    ],
     "keyid": "https://envoys.me/agents/test@rfc8032-vec1.example",
     "created": 1714000060,
     "nonce": "EBESExQVFhcYGRobHB0eHw"

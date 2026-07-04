@@ -1,0 +1,62 @@
+{
+  "$schema": "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+  "name": "levels/level-1-domain-verified",
+  "description": "Level 1 (DOMAIN_VERIFIED): an AgentCard declaring DOMAIN_VERIFIED with a domain attestation, plus the pinned DNS TXT record the domain owner published at _a2a-identity.example.com. A conforming verifier extracts the domain from provider.url, checks the record name, and verifies that the record's agent name matches the agentId, its kid matches the declared key ID, and its fp equals base64url(sha256(raw public key bytes)) without padding. All checks are offline against the pinned record — live DNS resolution (and DNSSEC) is deployment behavior outside the suite's scope.",
+  "spec": [
+    {
+      "id": "A2A-IDF",
+      "ref": "https://github.com/a2aproject/A2A/pull/1496",
+      "section": "§1 Agent Identity Verification Levels — Level 1 DNS Verification (_a2a-identity TXT record)"
+    },
+    {
+      "id": "RFC 8032",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+      "section": "§7.1 (Ed25519 test keypairs)"
+    }
+  ],
+  "level": 1,
+  "agentCard": {
+    "name": "financial-advisor-agent",
+    "provider": {
+      "organization": "Example Corp",
+      "url": "https://example.com"
+    },
+    "capabilities": {
+      "extensions": [
+        {
+          "uri": "https://a2a-protocol.org/extensions/agent-identity",
+          "description": "Agent identity verification and trust signals",
+          "required": false,
+          "params": {
+            "version": "1.0.0",
+            "identityLevel": "DOMAIN_VERIFIED",
+            "agentId": "urn:a2a:agent:example.com:financial-advisor:v2",
+            "publicKey": {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+              "kid": "agent-a1b2c3d4"
+            },
+            "attestations": [
+              {
+                "type": "domain",
+                "domain": "example.com",
+                "verifiedAt": "2026-02-17T00:00:00Z",
+                "method": "DNS_TXT"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "evidence": {
+    "dnsTxt": {
+      "recordName": "_a2a-identity.example.com",
+      "recordValue": "v=a2a1; agent=financial-advisor; kid=agent-a1b2c3d4; fp=If4x36FUomFia_hUBG_SJxt77UtqvkWqWId-9H-XIbk"
+    }
+  },
+  "expected": {
+    "verifyResult": "ACCEPT"
+  }
+}
