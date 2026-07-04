@@ -1,0 +1,443 @@
+{
+  "$schema": "https://specs.opena2a.org/schemas/conformance-profile-v1.json",
+  "suite": "a2a-idf-conformance",
+  "spec": {
+    "id": "A2A-IDF",
+    "name": "Agent-to-Agent Identity Framework",
+    "version": "1.0.0-draft",
+    "ref": "https://github.com/a2aproject/A2A/pull/1496"
+  },
+  "fixtureManifest": "MANIFEST.sha256",
+  "verifiers": [
+    {
+      "language": "node",
+      "path": "scripts/verify.mjs",
+      "coverage": "full: composition (RFC 9421 wire layer + §6 dual-shape keyid resolution) and levels (§1 SELF_ASSERTED / DOMAIN_VERIFIED / ORGANIZATION_VERIFIED)"
+    },
+    {
+      "language": "python",
+      "path": "scripts/verify.py",
+      "coverage": "full: same fixture families and check order as the Node verifier"
+    }
+  ],
+  "notCovered": [
+    {
+      "specSection": "§1 DNS Verification — live DNS resolution and DNSSEC validation",
+      "reason": "fixtures pin the TXT record content; live resolution is deployment behavior, not byte-stable"
+    },
+    {
+      "specSection": "§7 Delegation chains — per-link signatures and chain-rule enforcement",
+      "reason": "envelope shapes pinned in fixtures; deeper verification lands once APS delegation schemas stabilize"
+    },
+    {
+      "specSection": "§8 Bilateral receipts — responder signature over the JCS receipt payload",
+      "reason": "same APS schema-stability dependency as delegation chains"
+    },
+    {
+      "specSection": "v1.1 Vouching attestations",
+      "reason": "spec cycle not started; fixture shape depends on the CTEF envelope decision"
+    },
+    {
+      "specSection": "v1.2 Revocation log",
+      "reason": "byte-stability requires pinned tree-state fixtures; deferred with the spec cycle"
+    }
+  ],
+  "requirements": [
+    {
+      "fixture": "fixtures/composition/aim-did-rfc9421/bilateral-receipt.json",
+      "name": "aim-did-rfc9421/bilateral-receipt",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape) and §8 Composition with bilateral receipts"
+        },
+        {
+          "id": "APS",
+          "ref": "https://github.com/a2aproject/A2A/issues/1575",
+          "section": "Bilateral receipt envelope"
+        },
+        {
+          "id": "Envoys signature/v1",
+          "ref": "https://envoys.me/specs/signature/v1",
+          "version": "1.5.1",
+          "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+          "section": "§14 Vector 2 (POST request, JSON body)"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§2.5 Creating the Signature Base"
+        },
+        {
+          "id": "RFC 9530",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+          "section": "Content-Digest header field"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (envelope payload)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (Ed25519 keypair)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "ACCEPT",
+      "description": "A2A-IDF identity-framework wrap of an Envoys §14 Vector 2 wire signature (POST /api/task with a JSON body) inside an APS bilateral-receipt envelope. The initiator's wire signature is byte-identical to Envoys §14 Vector 2 by construction (the envelope does not re-sign the wire request). The envelope adds a responder acknowledgment over a JCS-canonical receipt payload referencing the initiator's wire signature. The conformance verifier checks the wire layer (RFC 9421 + A2A-IDF §6 dual-shape keyid resolution); deeper envelope verification (responder signature over the JCS receipt) is a planned extension."
+    },
+    {
+      "fixture": "fixtures/composition/aim-did-rfc9421/body-tampered.json",
+      "name": "aim-did-rfc9421/body-tampered",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape: application/did+json vs compact form)"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§3.2 Verifying a Signature"
+        },
+        {
+          "id": "RFC 9530",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+          "section": "Content-Digest header field"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (Ed25519 keypair)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "REJECT[SIGNATURE_INVALID]",
+      "description": "Negative fixture: the bilateral-receipt request body modified after signing (url changed to https://evil.example/doc), with the Content-Digest header recomputed to match the new body — as an in-path attacker who cannot re-sign would do. The Signature header still carries the Envoys §14 Vector 2 signature over the ORIGINAL body's signature base. A conforming A2A-IDF verifier MUST reject: content-digest is a signed component, so the recomputed digest changes the signature base and Ed25519 verification fails."
+    },
+    {
+      "fixture": "fixtures/composition/aim-did-rfc9421/delegation-chain-3link.json",
+      "name": "aim-did-rfc9421/delegation-chain-3link",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape) and §7 Delegation chains"
+        },
+        {
+          "id": "APS",
+          "ref": "https://github.com/a2aproject/A2A/issues/1575",
+          "section": "Delegation chain envelopes"
+        },
+        {
+          "id": "Envoys signature/v1",
+          "ref": "https://envoys.me/specs/signature/v1",
+          "version": "1.5.1",
+          "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+          "section": "§14 Vector 3 (POST request, empty JSON object body)"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§2.5 Creating the Signature Base"
+        },
+        {
+          "id": "RFC 9530",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+          "section": "Content-Digest header field"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (per-link payload)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (Ed25519 keypair)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "ACCEPT",
+      "description": "A2A-IDF identity-framework wrap of an Envoys §14 Vector 3 wire signature (POST /api/echo with an empty JSON object body) inside a 3-link APS delegation chain envelope. The wire signature is byte-identical to Envoys §14 Vector 3 by construction. The envelope adds three delegation links demonstrating the chain rules from A2A-IDF §7: scope monotonic narrowing, expiry monotonic non-increase, depth at most maxDepth (default 4), and previousSignature binding between consecutive links. The conformance verifier checks the wire layer (RFC 9421 + A2A-IDF §6 dual-shape keyid resolution); deeper chain verification (per-link signatures and rule enforcement against the link payloads' JCS form) is a planned extension."
+    },
+    {
+      "fixture": "fixtures/composition/aim-did-rfc9421/key-substituted.json",
+      "name": "aim-did-rfc9421/key-substituted",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape: application/did+json vs compact form)"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§3.2 Verifying a Signature"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (substituted Ed25519 public key)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "REJECT[SIGNATURE_INVALID]",
+      "description": "Negative fixture: the signature-alone request with the DID Document's verification keys substituted for a different valid Ed25519 key (RFC 8032 §7.1 Test 2, in both publicKeyMultibase and publicKeyJwk encodings). The signature bytes are the valid Envoys §14 Vector 1 signature, produced by the Test 1 key. A conforming A2A-IDF verifier MUST reject: the key material served at the keyid URL does not match the signing key. Models a key-substitution attack on the §6 resolution step — the resolved document is attacker-controlled but cannot validate a signature it did not produce."
+    },
+    {
+      "fixture": "fixtures/composition/aim-did-rfc9421/signature-alone.json",
+      "name": "aim-did-rfc9421/signature-alone",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape: application/did+json vs compact form)"
+        },
+        {
+          "id": "Envoys signature/v1",
+          "ref": "https://envoys.me/specs/signature/v1",
+          "version": "1.5.1",
+          "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+          "section": "§14 Vector 1 (GET request, no body)"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§2.5 Creating the Signature Base"
+        },
+        {
+          "id": "RFC 9530",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+          "section": "Content-Digest header field"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (Ed25519 keypair)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "ACCEPT",
+      "description": "A2A-IDF identity-framework wrap of an Envoys §14 Vector 1 wire signature. The keyid URL resolves to a W3C DID Document (Ed25519VerificationKey2020 + publicKeyMultibase) rather than the Envoys §6 compact form. Because the RFC 9421 signature base depends only on the signed components and parameters, not on the keyid document shape, the resulting signature is byte-identical to Envoys §14 Vector 1. This fixture demonstrates that a verifier implementing A2A-IDF §6 dual-shape keyid resolution can interoperate with Envoys-signed traffic without re-keying or re-signing."
+    },
+    {
+      "fixture": "fixtures/composition/aim-did-rfc9421/signature-tampered.json",
+      "name": "aim-did-rfc9421/signature-tampered",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape: application/did+json vs compact form)"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§3.2 Verifying a Signature"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (Ed25519 keypair)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "REJECT[SIGNATURE_INVALID]",
+      "description": "Negative fixture: the signature-alone request with its Ed25519 signature bytes tampered (first base64 character altered). Everything else — body, Content-Digest, signature base, Signature-Input, keyid resolution — is identical to the valid fixture. A conforming A2A-IDF verifier MUST reject the request: the signature no longer verifies against the resolved public key. Models in-flight modification of the Signature header."
+    },
+    {
+      "fixture": "fixtures/levels/level-0-agent-id-malformed.json",
+      "name": "levels/level-0-agent-id-malformed",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Agent Identity Verification Levels — Agent Identifiers (URN format)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 (Ed25519 test keypairs)"
+        }
+      ],
+      "expected": "REJECT[SHAPE_INVALID]",
+      "description": "Negative fixture: a SELF_ASSERTED AgentCard whose agentId is not in the urn:a2a:agent:{domain}:{agent-name}:{version} format required by A2A-IDF §1 for declared agent identifiers. A conforming verifier MUST reject the declaration shape: a malformed agentId cannot serve as a stable identifier across AgentCard updates and key rotations."
+    },
+    {
+      "fixture": "fixtures/levels/level-0-self-asserted.json",
+      "name": "levels/level-0-self-asserted",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Agent Identity Verification Levels — Level 0 SELF_ASSERTED declaration shape"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 (Ed25519 test keypairs)"
+        }
+      ],
+      "expected": "ACCEPT",
+      "description": "Level 0 (SELF_ASSERTED): an AgentCard declaring the agent-identity extension with identityLevel SELF_ASSERTED, a URN-format agentId, and an Ed25519 public key. No attestations are present and none are required — Level 0 makes no verifiable claim beyond well-formedness. A conforming verifier ACCEPTs the declaration shape while treating the identity as unverified (A2A-IDF Security Considerations: clients MUST NOT treat Level 0 agents as verified)."
+    },
+    {
+      "fixture": "fixtures/levels/level-1-domain-verified.json",
+      "name": "levels/level-1-domain-verified",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Agent Identity Verification Levels — Level 1 DNS Verification (_a2a-identity TXT record)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 (Ed25519 test keypairs)"
+        }
+      ],
+      "expected": "ACCEPT",
+      "description": "Level 1 (DOMAIN_VERIFIED): an AgentCard declaring DOMAIN_VERIFIED with a domain attestation, plus the pinned DNS TXT record the domain owner published at _a2a-identity.example.com. A conforming verifier extracts the domain from provider.url, checks the record name, and verifies that the record's agent name matches the agentId, its kid matches the declared key ID, and its fp equals base64url(sha256(raw public key bytes)) without padding. All checks are offline against the pinned record — live DNS resolution (and DNSSEC) is deployment behavior outside the suite's scope."
+    },
+    {
+      "fixture": "fixtures/levels/level-1-fingerprint-mismatch.json",
+      "name": "levels/level-1-fingerprint-mismatch",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Agent Identity Verification Levels — Level 1 DNS Verification (fingerprint binding)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 (Ed25519 test keypairs)"
+        }
+      ],
+      "expected": "REJECT[FINGERPRINT_MISMATCH]",
+      "description": "Negative fixture: the DOMAIN_VERIFIED AgentCard with a DNS TXT record whose fp field is the fingerprint of a DIFFERENT Ed25519 key (RFC 8032 §7.1 Test 2). Record name, agent name, and kid all match. A conforming verifier MUST reject: the fingerprint binds the DNS record to the exact public key bytes, and a mismatch means the domain owner did not endorse this key. Models an agent presenting a key the domain never authorized."
+    },
+    {
+      "fixture": "fixtures/levels/level-2-attestation-expired.json",
+      "name": "levels/level-2-attestation-expired",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Organization Verification (validity window)"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (attestation signing input)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (registry issuer key)"
+        }
+      ],
+      "expected": "REJECT[EXPIRED]",
+      "description": "Negative fixture: an ORGANIZATION_VERIFIED attestation whose registry signature is VALID but whose validity window ended before the pinned validationTime (expiresAt 2025-02-17 < validationTime 2026-07-03). Every other field is well-formed and correctly bound. A conforming verifier MUST reject on the validity window alone. The fixture pins validationTime so the expiry decision is deterministic and never depends on the wall clock."
+    },
+    {
+      "fixture": "fixtures/levels/level-2-attestation-tampered.json",
+      "name": "levels/level-2-attestation-tampered",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Organization Verification (attestation integrity)"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (attestation signing input)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (registry issuer key)"
+        }
+      ],
+      "expected": "REJECT[SIGNATURE_INVALID]",
+      "description": "Negative fixture: the ORGANIZATION_VERIFIED attestation with subject.organization altered AFTER signing (Example Corp → Wrong Corp). The signature was produced over the original JCS form, so it no longer verifies against the modified content. A conforming verifier MUST reject. Models post-issuance modification of a registry attestation."
+    },
+    {
+      "fixture": "fixtures/levels/level-2-organization-verified.json",
+      "name": "levels/level-2-organization-verified",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Organization Verification (registry attestation)"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (attestation signing input)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (agent key), Test 2 (registry issuer key)"
+        }
+      ],
+      "expected": "ACCEPT",
+      "description": "Level 2 (ORGANIZATION_VERIFIED): an AgentCard carrying an organization attestation signed by a trust registry (Ed25519 over the RFC 8785 JCS canonicalization of the attestation object with the signature field excluded). A conforming verifier checks that the attestation subject binds to the declared agentId and kid, verifies the registry signature against the pinned issuer public key, and confirms the pinned validationTime falls inside [verifiedAt, expiresAt]. The issuer key is RFC 8032 §7.1 Test 2 (registry role); the agent key is Test 1."
+    }
+  ]
+}

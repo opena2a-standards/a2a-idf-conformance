@@ -1,0 +1,49 @@
+{
+  "$schema": "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+  "name": "levels/level-0-agent-id-malformed",
+  "description": "Negative fixture: a SELF_ASSERTED AgentCard whose agentId is not in the urn:a2a:agent:{domain}:{agent-name}:{version} format required by A2A-IDF §1 for declared agent identifiers. A conforming verifier MUST reject the declaration shape: a malformed agentId cannot serve as a stable identifier across AgentCard updates and key rotations.",
+  "spec": [
+    {
+      "id": "A2A-IDF",
+      "ref": "https://github.com/a2aproject/A2A/pull/1496",
+      "section": "§1 Agent Identity Verification Levels — Agent Identifiers (URN format)"
+    },
+    {
+      "id": "RFC 8032",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+      "section": "§7.1 (Ed25519 test keypairs)"
+    }
+  ],
+  "level": 0,
+  "agentCard": {
+    "name": "financial-advisor-agent",
+    "provider": {
+      "organization": "Example Corp",
+      "url": "https://example.com"
+    },
+    "capabilities": {
+      "extensions": [
+        {
+          "uri": "https://a2a-protocol.org/extensions/agent-identity",
+          "description": "Agent identity verification and trust signals",
+          "required": false,
+          "params": {
+            "version": "1.0.0",
+            "identityLevel": "SELF_ASSERTED",
+            "agentId": "financial-advisor/v2",
+            "publicKey": {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+              "kid": "agent-a1b2c3d4"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "expected": {
+    "verifyResult": "REJECT",
+    "rejectCategory": "SHAPE_INVALID"
+  }
+}

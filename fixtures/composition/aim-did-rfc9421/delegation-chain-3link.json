@@ -46,7 +46,7 @@
       "section": "§5.2 Verification Methods"
     }
   ],
-  "keypairRef": "../../vectors/rfc8032-7-1.json",
+  "keypairRef": "../../../vectors/rfc8032-7-1.json",
   "input": {
     "method": "POST",
     "path": "/api/echo",
@@ -54,7 +54,11 @@
     "bodyEncoding": "utf-8"
   },
   "signatureParams": {
-    "components": ["@method", "@path", "content-digest"],
+    "components": [
+      "@method",
+      "@path",
+      "content-digest"
+    ],
     "keyid": "https://envoys.me/agents/test@rfc8032-vec1.example",
     "created": 1714000120,
     "nonce": "ICEiIyQlJicoKSorLC0uLw"
@@ -124,7 +128,11 @@
         "type": "root",
         "issuerKeyid": "https://envoys.me/agents/test@rfc8032-vec1.example",
         "subjectKeyid": "did:web:counterparty.example:agents:delegate-level-1",
-        "scope": ["POST /api/echo", "POST /api/health", "GET /api/health"],
+        "scope": [
+          "POST /api/echo",
+          "POST /api/health",
+          "GET /api/health"
+        ],
         "issuedAt": "2026-05-01T00:00:00Z",
         "expiresAt": "2026-12-31T00:00:00Z",
         "linkPayloadJcsNote": "JCS canonical form of {issuerKeyid, subjectKeyid, scope, issuedAt, expiresAt, type:'root'} signed by the issuer."
@@ -134,7 +142,10 @@
         "type": "derived",
         "issuerKeyid": "did:web:counterparty.example:agents:delegate-level-1",
         "subjectKeyid": "did:web:counterparty.example:agents:delegate-level-2",
-        "scope": ["POST /api/echo", "POST /api/health"],
+        "scope": [
+          "POST /api/echo",
+          "POST /api/health"
+        ],
         "issuedAt": "2026-05-05T00:00:00Z",
         "expiresAt": "2026-09-30T00:00:00Z",
         "previousSignatureRef": "links[0].signature",
@@ -145,7 +156,9 @@
         "type": "derived",
         "issuerKeyid": "did:web:counterparty.example:agents:delegate-level-2",
         "subjectKeyid": "https://envoys.me/agents/test@rfc8032-vec1.example",
-        "scope": ["POST /api/echo"],
+        "scope": [
+          "POST /api/echo"
+        ],
         "issuedAt": "2026-05-10T00:00:00Z",
         "expiresAt": "2026-06-30T00:00:00Z",
         "previousSignatureRef": "links[1].signature",
@@ -162,7 +175,9 @@
       "previousSignatureBinding": "Each derived link's previousSignature equals the prior link's signature, forming a hash-chain through Ed25519 signatures."
     },
     "wireRequestAuthorization": {
-      "finalScope": ["POST /api/echo"],
+      "finalScope": [
+        "POST /api/echo"
+      ],
       "wireRequest": "POST /api/echo",
       "match": true,
       "note": "The final subject (chain leaf) is the wire-signature signer; the final scope authorizes the wire request method and path."
