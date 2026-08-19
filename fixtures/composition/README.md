@@ -24,17 +24,13 @@ Plus three negative fixtures a conforming verifier MUST reject: `signature-tampe
 
 Direct cross-validation against [`envoys-rfc9421/`](https://github.com/aeoess/aps-conformance-suite) fixtures. A2A-IDF verifiers MUST produce the same accept/reject decisions on these inputs as the Envoys reference verifier.
 
-### `erc-8004-bridge/` (planned, pending spec-author input)
+### `erc-8004-bridge/` (proposed, blocked on upstream)
 
-Cross-layer composition between A2A-IDF (off-chain identity framework) and [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) (Ethereum on-chain IdentityRegistry). An ERC-8004 IdentityRegistry entry's `tokenURI` resolves to an A2A-IDF DID Document, with both the on-chain entry hash and the off-chain DID Document's wire signature byte-stable.
+Cross-layer composition between A2A-IDF (off-chain identity framework) and [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) (Ethereum on-chain Identity Registry). An Identity Registry entry's token URI resolves to an agent registration file; the proposed fixture set would pin both the on-chain entry hash and an off-chain A2A-IDF DID Document's wire signature.
 
-First fixture set scopes to the identity composition surface only. TEE / zkTLS attestation envelopes (ERC-8004 ValidationRegistry) defer to a second fixture set gated on the OM World Intent Schema verifier-map question.
+Not scheduled. ERC-8004 is `status: Draft` on the EIP track (checked 2026-08-19 against [`ethereum/ERCs`](https://github.com/ethereum/ERCs/blob/master/ERCS/erc-8004.md)) and defines no conformance test cases, so there is no upstream shape to conform to yet. A second open question is our own byte-pin gate: fixtures are emitted by a deterministic generator and CI fails on any diff, so a bridge fixture would need a pinned chain-state snapshot (fixed block number plus committed response body) rather than a live RPC read at generation time.
 
-Verifier tooling for this directory is scoped: an ethers-based reader for `IdentityRegistry.tokenURI` lives inside the bridge directory and does not change the top-level Node stdlib `crypto` / Python `cryptography` verifier dependencies.
-
-Fixture refs pin both the EIP draft revision (`version` = EIP git SHA or revision date) and the canonical content (`specSha256`), matching the version-pinning discipline used in `aim-did-rfc9421/` for Envoys v1.4.0 → v1.5.1.
-
-Tracked in [#5](https://github.com/opena2a-org/a2a-idf-conformance/issues/5). Spec-author input invited from [@MarcoMetaMask](https://github.com/MarcoMetaMask) and [@dcrapis](https://github.com/dcrapis) on the canonical shape (which `IdentityRegistry` fields enter the cross-layer hash, which are informational, how `tokenURI → DID Document` resolution composes) before the contributor PR lands.
+Tracked in [#5](https://github.com/opena2a-standards/a2a-idf-conformance/issues/5), which stays open. Revisit when ERC-8004 leaves Draft, or when we decide to pin a specific revision and accept the churn.
 
 ## Fixture format
 
