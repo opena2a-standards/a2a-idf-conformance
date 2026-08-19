@@ -1,0 +1,96 @@
+name: ERC-8004 upstream status
+
+# Issue #5 proposes an erc-8004-bridge composition fixture set. It is parked because
+# ERC-8004 is `status: Draft` on the EIP track and defines no conformance test cases.
+#
+# The previous version of that promise was "give them a week or so", and it produced 88
+# days of silence because it was an intention with nothing behind it. This workflow is
+# the mechanism: it reads the live status every month, and it posts on #5 at the
+# 2026-11-17 backstop EVEN IF NOTHING CHANGED, so a quiet upstream still produces a
+# signal rather than another silence.
+
+on:
+  schedule:
+    - cron: "17 6 1 * *"   # 06:17 UTC on the 1st of each month
+  workflow_dispatch:
+
+# An explicit permissions block defaults every unnamed scope to none, so `issues: write`
+# has to be named here or the comment steps 403.
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    name: read ethereum/ERCs status, post on change or at the backstop
+    runs-on: ubuntu-latest
+    env:
+      ISSUE: "5"
+      BACKSTOP: "2026-11-17"
+      BACKSTOP_MARKER: "<!-- erc8004-backstop -->"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Read upstream status
+        id: check
+        run: |
+          # `shell: bash` already sets -e, so a non-zero exit would kill the step before
+          # we can branch on it. 10 means "changed" and is an expected outcome here.
+          set +e
+          node scripts/check-erc8004-status.mjs | tee status.txt
+          code=${PIPESTATUS[0]}
+          set -e
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -eq 1 ]; then
+            echo "Could not read upstream. Failing loudly rather than reporting no change."
+            exit 1
+          fi
+          echo "observed=$(sed -n 's/^upstream *: *//p' status.txt)" >> "$GITHUB_OUTPUT"
+
+      # Bodies are built with a QUOTED heredoc so nothing in the markdown is expanded by
+      # the shell: backticks would otherwise be command substitution. Dynamic values go
+      # in afterwards through placeholders, and reach the step as env rather than as
+      # inline ${{ }} interpolation.
+      - name: Comment on the issue when the status changed
+        if: steps.check.outputs.code == '10'
+        env:
+          OBSERVED: ${{ steps.check.outputs.observed }}
+        run: |
+          cat > body.md <<'MD'
+          **Upstream status changed.** ERC-8004 is now `status: __OBSERVED__` in `ethereum/ERCs`, read by the scheduled check (run __RUN__).
+
+          This is the precondition the `erc-8004-bridge` entry was parked on. Two questions reopen: whether the spec now carries conformance test cases to conform to, and whether we can pin a chain-state snapshot that passes the byte-pin gate.
+
+          `.github/erc-8004-upstream.json` still records the old value. Update it in the same change that revisits `fixtures/composition/README.md`.
+          MD
+          sed -i "s|__OBSERVED__|${OBSERVED}|g; s|__RUN__|${GITHUB_RUN_ID}|g" body.md
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file body.md
+
+      - name: Post at the backstop even if nothing changed
+        if: steps.check.outputs.code == '0'
+        env:
+          OBSERVED: ${{ steps.check.outputs.observed }}
+        run: |
+          today=$(date -u +%F)
+          if [[ "$today" < "$BACKSTOP" ]]; then
+            echo "Before the $BACKSTOP backstop, status unchanged. Nothing to post."
+            exit 0
+          fi
+          if gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json comments \
+               --jq '.comments[].body' | grep -qF "$BACKSTOP_MARKER"; then
+            echo "Backstop already posted. Not repeating it every month."
+            exit 0
+          fi
+          cat > body.md <<'MD'
+          __MARKER__
+          **Scheduled report-back (__BACKSTOP__).** ERC-8004 is still `status: __OBSERVED__` in `ethereum/ERCs`, so the `erc-8004-bridge` fixture set stays parked. Nothing has changed upstream and nothing is expected of anyone on this thread.
+
+          Posting this because we said we would post either way. The monthly check keeps running, so the next signal will be a status change rather than a date.
+          MD
+          sed -i "s|__OBSERVED__|${OBSERVED}|g; s|__BACKSTOP__|${BACKSTOP}|g; s|__MARKER__|${BACKSTOP_MARKER}|g" body.md
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file body.md

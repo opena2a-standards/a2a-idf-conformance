@@ -1,0 +1,6 @@
+{
+  "_comment": "Last observed EIP-track status of ERC-8004. The erc-8004-bridge fixture set (issue #5) is parked until this leaves Draft. Read and updated only by scripts/check-erc8004-status.mjs. Deliberately NOT under fixtures/, which both reference verifiers and the conformance profile walk as fixture inputs.",
+  "source": "https://raw.githubusercontent.com/ethereum/ERCs/master/ERCS/erc-8004.md",
+  "status": "Draft",
+  "observedAt": "2026-08-19"
+}
