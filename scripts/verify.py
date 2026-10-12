@@ -27,7 +27,9 @@ import base64
 import hashlib
 import ipaddress
 import json
+import os
 import re
+import stat
 import sys
 import unicodedata
 from pathlib import Path
@@ -627,8 +629,9 @@ def _hostname_of(url: Any) -> str | None:
     Approximated: the mapping of a non-ASCII domain (see `_ascii_host`). The
     UTS #46 validity checks are not made, so a domain those checks refuse (a
     disallowed code point other than U+FFFD, a joiner out of context, a Bidi
-    rule violation) is reported here as its Punycode form, and an `xn--` label
-    given in ASCII is returned as written."""
+    rule violation) is reported here as a host, usually a Punycode form, and
+    can be plain ASCII (U+2024 ONE DOT LEADER maps to a full stop), and an
+    `xn--` label given in ASCII is returned as written."""
     if not isinstance(url, str):
         return None
     # The parser reads a lone surrogate as U+FFFD, drops C0 controls and spaces
@@ -946,8 +949,81 @@ def schema_violation(schema: dict[str, Any], value: Any, path: str) -> str | Non
 # --- driver -----------------------------------------------------------------------
 
 
+_JSON_SCAN = json.JSONDecoder().scan_once
+_JSON_WHITESPACE = re.compile(r"[ \t\n\r]*")
+
+
+def _load_json(text: str) -> Any:
+    """json.loads(text), without recursion. json.loads recurses once per level
+    of nesting and raises past a depth that depends on the interpreter (fewer
+    than 1,000 levels on CPython 3.11, fewer than 10,000 on 3.12 and 3.13),
+    where JSON.parse in verify.mjs reaches a verdict. Here the open arrays and
+    objects are kept on a list, and every string, number and literal is read
+    by the json module's own scanner, so each value decodes as json.loads
+    decodes it."""
+    skip = _JSON_WHITESPACE.match
+    # Each open container with the key its next value is stored under (None
+    # for an array).
+    stack: list[tuple[Any, str | None]] = []
+    idx = skip(text).end()
+    while True:
+        # Read one value at idx: open a container, or scan a complete value.
+        opener = text[idx : idx + 1]
+        if opener in ("[", "{"):
+            container: Any = [] if opener == "[" else {}
+            idx = skip(text, idx + 1).end()
+            if text[idx : idx + 1] != ("]" if opener == "[" else "}"):
+                key = None
+                if opener == "{":
+                    key, idx = _json_member_name(text, idx)
+                stack.append((container, key))
+                continue
+            value, idx = container, idx + 1
+        else:
+            try:
+                value, idx = _JSON_SCAN(text, idx)
+            except StopIteration as stop:
+                raise json.JSONDecodeError("Expecting value", text, stop.value) from None
+        # Store the value in the container it closes, then close every
+        # container that ends after it.
+        while stack:
+            container, key = stack[-1]
+            if key is None:
+                container.append(value)
+            else:
+                container[key] = value
+            idx = skip(text, idx).end()
+            delimiter = text[idx : idx + 1]
+            if delimiter == ",":
+                idx = skip(text, idx + 1).end()
+                if key is not None:
+                    key, idx = _json_member_name(text, idx)
+                    stack[-1] = (container, key)
+                break
+            if delimiter != ("]" if key is None else "}"):
+                raise json.JSONDecodeError("Expecting ',' delimiter", text, idx)
+            stack.pop()
+            value, idx = container, idx + 1
+        else:
+            end = skip(text, idx).end()
+            if end != len(text):
+                raise json.JSONDecodeError("Extra data", text, end)
+            return value
+
+
+def _json_member_name(text: str, idx: int) -> tuple[str, int]:
+    """The member name at idx and the index of the value after its colon."""
+    if text[idx : idx + 1] != '"':
+        raise json.JSONDecodeError("Expecting property name enclosed in double quotes", text, idx)
+    name, idx = _JSON_SCAN(text, idx)
+    idx = _JSON_WHITESPACE.match(text, idx).end()
+    if text[idx : idx + 1] != ":":
+        raise json.JSONDecodeError("Expecting ':' delimiter", text, idx)
+    return name, _JSON_WHITESPACE.match(text, idx + 1).end()
+
+
 def verify_fixture(path: Path) -> tuple[bool, str | None, list[str]]:
-    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture = _load_json(path.read_text(encoding="utf-8"))
     schemas = load_schemas()
     family = fixture_family(fixture, schemas)
     violation = schema_violation(schemas[family], fixture, "")
@@ -958,11 +1034,52 @@ def verify_fixture(path: Path) -> tuple[bool, str | None, list[str]]:
     return verify_composition_fixture(fixture)
 
 
-def collect_fixtures(arg: str) -> list[Path]:
-    path = Path(arg).resolve()
-    if not path.is_dir():
-        return [path]
-    return sorted(p for p in path.rglob("*.json") if p.is_file())
+def _is_real_directory(path: Path) -> bool:
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def _is_fixture_file(path: Path) -> bool:
+    """A `*.json` path that is a file, or one that cannot be read at all (a
+    dangling symlink, a symlink loop), which is then reported as ERROR."""
+    if not path.name.endswith(".json"):
+        return False
+    try:
+        return stat.S_ISREG(os.stat(path).st_mode)
+    except OSError:
+        return True
+
+
+def collect_fixtures(arg: str) -> list[tuple[Path, OSError | None]]:
+    """The fixtures `arg` names, each with the error that kept it from being
+    listed (None when it was listed). A path that is not a directory is
+    returned as it is, so one that cannot be read (missing, a symlink loop,
+    no read permission) is reported as ERROR when it is read. A directory is
+    walked for `*.json` files without following symlinks to directories, and
+    a directory that cannot be listed is returned with its error, so a
+    permissions problem is reported as ERROR rather than read as a pass. The
+    path is made absolute without resolving symlinks, as in verify.mjs."""
+    path = Path(os.path.abspath(arg))
+    if not os.path.isdir(path):
+        return [(path, None)]
+    found: list[tuple[Path, OSError | None]] = []
+    pending = [path]
+    while pending:
+        directory = pending.pop()
+        try:
+            names = os.listdir(directory)
+        except OSError as exc:
+            found.append((directory, exc))
+            continue
+        for name in names:
+            entry = directory / name
+            if _is_real_directory(entry):
+                pending.append(entry)
+            elif _is_fixture_file(entry):
+                found.append((entry, None))
+    return sorted(found, key=lambda item: item[0])
 
 
 def main() -> int:
@@ -975,11 +1092,13 @@ def main() -> int:
     # UTF-8 cannot encode: print it escaped instead of raising while reporting.
     sys.stdout.reconfigure(errors="backslashreplace")
 
-    paths = [p for arg in args for p in collect_fixtures(arg)]
+    paths = [entry for arg in args for entry in collect_fixtures(arg)]
     pass_count = 0
     fail_count = 0
-    for path in paths:
+    for path, listing_error in paths:
         try:
+            if listing_error is not None:
+                raise listing_error
             ok, observed, lines = verify_fixture(path)
             if ok:
                 pass_count += 1

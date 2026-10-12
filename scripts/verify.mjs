@@ -690,17 +690,37 @@ function verifyFixture(path) {
   return verifyCompositionFixture(fixture, path);
 }
 
-// A path that does not exist is returned as a fixture, so reading it fails
-// inside the per-fixture loop and is reported as ERROR, as verify.py does.
+// A path whose status cannot be read (missing, a symlink loop) is not a directory.
+function isDirectory(path) {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// The fixtures `arg` names, each with the error that kept it from being listed.
+// A path that is not a directory is returned as it is, so one that cannot be
+// read (missing, a symlink loop, no read permission) fails inside the
+// per-fixture loop and is reported as ERROR, as verify.py does. A directory that
+// cannot be listed is returned with its error, so a permissions problem is
+// reported as ERROR rather than read as a pass.
 function collectFixtures(arg) {
   const abs = resolve(arg);
-  if (!statSync(abs, { throwIfNoEntry: false })?.isDirectory()) return [abs];
+  if (!isDirectory(abs)) return [{ path: abs }];
   const out = [];
   const walk = (dir) => {
-    for (const entry of readdirSync(dir).sort()) {
+    let entries;
+    try {
+      entries = readdirSync(dir).sort();
+    } catch (error) {
+      out.push({ path: dir, error });
+      return;
+    }
+    for (const entry of entries) {
       const p = join(dir, entry);
-      if (statSync(p).isDirectory()) walk(p);
-      else if (p.endsWith(".json")) out.push(p);
+      if (isDirectory(p)) walk(p);
+      else if (p.endsWith(".json")) out.push({ path: p });
     }
   };
   walk(abs);
@@ -717,8 +737,9 @@ function main() {
   const paths = args.flatMap(collectFixtures);
   let passCount = 0;
   let failCount = 0;
-  for (const abs of paths) {
+  for (const { path: abs, error: listingError } of paths) {
     try {
+      if (listingError !== undefined) throw listingError;
       const result = verifyFixture(abs);
       if (result.ok) {
         passCount++;
@@ -741,8 +762,10 @@ function main() {
     } catch (err) {
       failCount++;
       console.log(`ERROR ${abs}`);
-      // A failed system call (ENOENT, EACCES, EISDIR) is a problem with the input
-      // and its message names the path; a stack trace is kept for a verifier fault.
+      // A failed system call (ENOENT, ENOTDIR, EACCES, ELOOP) is a problem with
+      // the input and its message names the path; a stack trace is kept for a
+      // verifier fault. collectFixtures walks directories, so no directory is
+      // read as a file (EISDIR, whose message names no path).
       console.log(`      ${err.syscall !== undefined ? err.message : (err.stack ?? err.message)}`);
     }
   }

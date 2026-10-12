@@ -8,7 +8,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -113,3 +122,91 @@ test("a fixture path that does not exist is reported as ERROR by both verifiers"
     assert.deepEqual(lines.slice(2), ["summary: 0 pass, 1 fail (1 fixtures)", ""], name);
   }
 });
+
+// A path that cannot be stat'ed or read, or a directory that cannot be listed,
+// is an ERROR entry whose message names it, and the run goes on to the summary
+// line: never an uncaught exception, and never a run that skips the entry and
+// exits 0. `errors` lists each expected ERROR entry as [path, message pattern].
+const SYMLINK_LOOP = /too many (levels of )?symbolic links/i;
+const NO_PERMISSION = /permission denied/i;
+
+function assertErrorEntries(name, result, dir, errors, summary) {
+  assert.equal(result.status, 1, `${name}: ${result.stdout}${result.stderr}`);
+  assert.equal(result.stderr, "", name);
+  const lines = result.stdout.split("\n");
+  for (const [path, message] of errors) {
+    const at = lines.indexOf(`ERROR ${join(dir, path)}`);
+    assert.notEqual(at, -1, `${name}: no ERROR line for ${path}\n${result.stdout}`);
+    assert.match(lines[at + 1], message, name);
+    assert.ok(lines[at + 1].includes(join(dir, path)), `${name}: ${lines[at + 1]}`);
+  }
+  assert.deepEqual(lines.slice(-2), [summary, ""], name);
+}
+
+// A scratch directory holding `valid.json`, a copy of a fixture both verifiers
+// pass, so each case shows the walk going on past the entry it cannot read. The
+// directory is given without symlinks, so both verifiers print the paths
+// written here.
+function scratchFixtureDir(t) {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "verify-")));
+  const locked = [];
+  t.after(() => {
+    for (const path of locked) chmodSync(path, 0o755);
+    rmSync(dir, { recursive: true, force: true });
+  });
+  writeFileSync(join(dir, "valid.json"), readFileSync(join(REPO, "fixtures/levels/level-0-self-asserted.json")));
+  return { dir, lock: (path) => (locked.push(path), chmodSync(path, 0o000)) };
+}
+
+test("a symlink loop is reported as ERROR by both verifiers", { skip: process.platform === "win32" }, (t) => {
+  const { dir } = scratchFixtureDir(t);
+  symlinkSync("loop-b.json", join(dir, "loop-a.json"));
+  symlinkSync("loop-a.json", join(dir, "loop-b.json"));
+  // Not a fixture name, so the walk passes over it in both verifiers.
+  symlinkSync("loop-c", join(dir, "loop-c"));
+  for (const [name, argv] of Object.entries(VERIFIERS)) {
+    assertErrorEntries(
+      `${name} (named)`,
+      runVerifier(argv, join(dir, "loop-a.json")),
+      dir,
+      [["loop-a.json", SYMLINK_LOOP]],
+      "summary: 0 pass, 1 fail (1 fixtures)",
+    );
+    assertErrorEntries(
+      `${name} (walked)`,
+      runVerifier(argv, dir),
+      dir,
+      [
+        ["loop-a.json", SYMLINK_LOOP],
+        ["loop-b.json", SYMLINK_LOOP],
+      ],
+      "summary: 1 pass, 2 fail (3 fixtures)",
+    );
+  }
+});
+
+test(
+  "a directory that cannot be listed is reported as ERROR by both verifiers",
+  { skip: process.platform === "win32" || process.getuid?.() === 0 },
+  (t) => {
+    const { dir, lock } = scratchFixtureDir(t);
+    mkdirSync(join(dir, "locked"));
+    lock(join(dir, "locked"));
+    for (const [name, argv] of Object.entries(VERIFIERS)) {
+      assertErrorEntries(
+        `${name} (named)`,
+        runVerifier(argv, join(dir, "locked")),
+        dir,
+        [["locked", NO_PERMISSION]],
+        "summary: 0 pass, 1 fail (1 fixtures)",
+      );
+      assertErrorEntries(
+        `${name} (walked)`,
+        runVerifier(argv, dir),
+        dir,
+        [["locked", NO_PERMISSION]],
+        "summary: 1 pass, 1 fail (2 fixtures)",
+      );
+    }
+  },
+);

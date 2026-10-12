@@ -50,9 +50,12 @@ NESTED = "nested-value-placeholder"
 
 # Deeper than a recursive walk of the attestation reached in either verifier
 # (verify.mjs overflowed its call stack at 3,000 levels, verify.py exceeded its
-# recursion limit at 900), and shallower than json.loads on Python 3.12 parses
-# (8,000 levels load, 10,000 do not).
-DEPTH = 5000
+# recursion limit at 900), and deeper than json.loads parses on the CPython
+# builds measured (fewer than 1,000 levels on 3.11.14, fewer than 1,500 on
+# 3.12.2, fewer than 10,000 on 3.12.12 and 3.13.12, 116,174 on 3.14.3 on macOS,
+# where the limit is the C stack), so these cases also hold verify.py to
+# reading a fixture without recursion, as JSON.parse in verify.mjs does.
+DEPTH = 200_000
 
 
 def identity_params(fixture: dict) -> dict:

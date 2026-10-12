@@ -41,16 +41,22 @@ def git_env(root: Path) -> dict[str, str]:
     return env
 
 
-def run_check(files: dict[str, str], timeout: int = 120) -> subprocess.CompletedProcess:
-    with tempfile.TemporaryDirectory() as tmp:
+def run_check(
+    files: dict[str, str], timeout: int = 120, git: bool = True, parent: str | None = None
+) -> subprocess.CompletedProcess:
+    """Run the check in a scratch directory under `parent` (the system
+    temporary directory by default), made a git repository unless `git` is
+    False."""
+    with tempfile.TemporaryDirectory(dir=parent) as tmp:
         repo = Path(tmp)
         env = git_env(repo)
         (repo / "scripts").mkdir()
         shutil.copy(SCRIPT, repo / "scripts" / SCRIPT.name)
         for name, text in files.items():
             (repo / name).write_text(text)
-        for command in (["git", "init", "-q"], ["git", "add", "--", *files]):
-            subprocess.run(command, cwd=repo, env=env, check=True, capture_output=True)
+        if git:
+            for command in (["git", "init", "-q"], ["git", "add", "--", *files]):
+                subprocess.run(command, cwd=repo, env=env, check=True, capture_output=True)
         return subprocess.run(
             ["node", str(repo / "scripts" / SCRIPT.name)],
             cwd=repo,
@@ -156,6 +162,18 @@ class GitEnvironmentTests(unittest.TestCase):
             self.assertIn("-> .sigstore/acme/MANIFEST.sha256.crt is ignored by git", proc.stdout)
             self.assertFalse(git_dir.exists(), "git init wrote the caller's GIT_DIR")
             self.assertFalse(index.exists(), "git add wrote the caller's GIT_INDEX_FILE")
+
+    def test_a_repository_above_the_scratch_directory_is_not_reached(self):
+        # The scratch directory has no repository of its own and sits inside
+        # one. Without GIT_CEILING_DIRECTORIES, git finds the one above and the
+        # check passes over its empty index instead of failing.
+        with tempfile.TemporaryDirectory() as outer:
+            subprocess.run(
+                ["git", "init", "-q"], cwd=outer, env=git_env(Path(outer)), check=True, capture_output=True
+            )
+            proc = run_check({"README.md": "# Demo\n"}, git=False, parent=outer)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertRegex(proc.stderr, r"^error: git ls-files failed .*not a git repository")
 
 
 if __name__ == "__main__":

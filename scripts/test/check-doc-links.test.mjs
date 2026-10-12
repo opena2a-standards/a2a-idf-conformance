@@ -22,8 +22,8 @@ function gitEnv(root) {
   return env;
 }
 
-function scratchRepo(t, files, { git = true } = {}) {
-  const root = mkdtempSync(join(tmpdir(), "doc-links-"));
+function scratchRepo(t, files, { git = true, parent = tmpdir() } = {}) {
+  const root = mkdtempSync(join(parent, "doc-links-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, "scripts"));
   cpSync(SCRIPT, join(root, "scripts", "check-doc-links.mjs"));
@@ -354,4 +354,17 @@ test("outside a git checkout prints one line naming the cause", (t) => {
   const output = (result.stdout + result.stderr).trim().split("\n");
   assert.equal(output.length, 1, output.join("\n"));
   assert.match(output[0], /^error: git ls-files failed .*not a git repository/);
+});
+
+test("a repository above the scratch directory is not reached", (t) => {
+  // The scratch directory has no repository of its own and sits inside one.
+  // Without GIT_CEILING_DIRECTORIES, git finds the one above and the check
+  // passes over its empty index instead of failing.
+  const outer = mkdtempSync(join(tmpdir(), "doc-links-outer-"));
+  t.after(() => rmSync(outer, { recursive: true, force: true }));
+  execFileSync("git", ["init", "-q"], { cwd: outer, env: gitEnv(outer) });
+  const root = scratchRepo(t, { "README.md": "# Demo\n" }, { git: false, parent: outer });
+  const result = runCheck(root);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stderr, /^error: git ls-files failed .*not a git repository/);
 });
