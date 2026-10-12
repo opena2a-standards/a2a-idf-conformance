@@ -47,7 +47,7 @@ On failure, the line is `FAIL` followed by `stage:` (which validation step faile
 
 ## Cross-implementation guarantee
 
-Both verifiers are wire-compatible with the [`envoys-rfc9421/`](https://github.com/aeoess/aps-conformance-suite) verifier on the signature-alone case (same keypair, same RFC 9421 components → byte-identical signature bytes). This is enforced twice: the generator asserts the recomputed signatures equal the Envoys §14 pins at generation time, and each fixture's `crossSuiteEquivalence.envoys` block makes the verifier check that `expected.signatureBase64` matches the pinned vector value.
+Both verifiers are wire-compatible with the [`envoys-rfc9421/`](https://github.com/aeoess/aps-conformance-suite) verifier on the signature-alone case (same keypair, same RFC 9421 components → byte-identical signature bytes). This is enforced twice: the generator asserts the recomputed signatures equal the Envoys §14 pins at generation time, and each fixture's `crossSuiteEquivalence.envoys` block makes the verifier check that the signature bytes it verified (parsed from `expected.signature`) match the pinned vector value, rejecting with `CROSS_SUITE_MISMATCH` when they do not. The `cross-suite-mismatch` negative fixture pins that check: its Signature header carries a different key's valid signature while `expected.signatureBase64` still carries the Envoys bytes.
 
 ## Why no implementation-library dependency
 

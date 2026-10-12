@@ -572,6 +572,44 @@ function bodyTamperedFixture() {
   };
 }
 
+function crossSuiteMismatchFixture() {
+  const expected = expectedBlock(INPUT_V1, PARAMS_V1, TEST2, {
+    verifyResult: "REJECT",
+    rejectCategory: "CROSS_SUITE_MISMATCH",
+  });
+  assertEqual(expected.signatureBase64 === ENVOYS_V1_SIG, false, "Test 2 signature differs from Envoys §14 Vector 1");
+  // The naked field carries the Envoys pin while the Signature header carries
+  // the Test 2 signature, so a verifier that byte-matches this field instead
+  // of the bytes it verified observes ACCEPT and fails the fixture.
+  expected.signatureBase64 = ENVOYS_V1_SIG;
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-composition-v1.json",
+    name: "aim-did-rfc9421/cross-suite-mismatch",
+    description:
+      "Negative fixture: the signature-alone request signed by a different valid Ed25519 key (RFC 8032 §7.1 Test 2), with the DID Document serving that same key, so the Signature header verifies against the resolved key. The fixture still declares byte-identity with Envoys §14 Vector 1, and its expected.signatureBase64 field carries the Vector 1 bytes instead of the bytes in the Signature header. A conforming verifier MUST reject: the cross-suite byte-match is a claim about the signature the verifier checked, so it compares the bytes parsed from the Signature header with the pinned vector, and those are the Test 2 signature. A verifier that compares expected.signatureBase64 instead accepts this fixture.",
+    spec: [
+      SPEC_A2A_IDF_S6,
+      SPEC_ENVOYS("§14 Vector 1 (GET request, no body)"),
+      SPEC_RFC9421_VERIFY,
+      SPEC_RFC8032("§7.1 Test 2 (signing key and resolved public key)"),
+      SPEC_DID_CORE,
+    ],
+    keypairRef: "../../../vectors/rfc8032-7-1-test2.json",
+    input: INPUT_V1,
+    signatureParams: PARAMS_V1,
+    keyidResolution: keyidResolution(TEST2.multibase, TEST2.jwkX),
+    expected,
+    crossSuiteEquivalence: {
+      envoys: {
+        vector: "§14 Vector 1",
+        expectedSignatureBase64: ENVOYS_V1_SIG,
+        byteIdentical: true,
+        note: "The declared byte-match does not hold: the verified signature is the Test 2 signature over the Vector 1 signature base, not the Vector 1 signature.",
+      },
+    },
+  };
+}
+
 // --- level fixtures (A2A-IDF §1 verification levels) ------------------------------
 
 const AGENT_ID = "urn:a2a:agent:example.com:financial-advisor:v2";
@@ -867,6 +905,7 @@ const FILES = {
   "fixtures/composition/aim-did-rfc9421/signature-tampered.json": signatureTamperedFixture(),
   "fixtures/composition/aim-did-rfc9421/key-substituted.json": keySubstitutedFixture(),
   "fixtures/composition/aim-did-rfc9421/body-tampered.json": bodyTamperedFixture(),
+  "fixtures/composition/aim-did-rfc9421/cross-suite-mismatch.json": crossSuiteMismatchFixture(),
   "fixtures/levels/level-0-self-asserted.json": level0Fixture(),
   "fixtures/levels/level-0-agent-id-malformed.json": level0MalformedFixture(),
   "fixtures/levels/level-1-domain-verified.json": level1Fixture(),

@@ -1,5 +1,6 @@
 11373274ac439aa17353ab26695f0daf439a5d753f4c116667386524d2769a0f  fixtures/composition/aim-did-rfc9421/bilateral-receipt.json
 c844fc09c3ed3af49c4d0aca0d37bcdda30d02f4a0aa58203d95debe394c8d08  fixtures/composition/aim-did-rfc9421/body-tampered.json
+e6d877900f88d3ef1c2f5c4b9025428b25569f95bc4032c252cc48b39aec3806  fixtures/composition/aim-did-rfc9421/cross-suite-mismatch.json
 9dc707e7bcadddc1b7a8b6cee02c89803af0777a3a7c23f64a9b1f3ce122671b  fixtures/composition/aim-did-rfc9421/delegation-chain-3link.json
 af09079768d90306ac976676b4e875de1e108b4c02c57e9ee83b16d856a1c6fb  fixtures/composition/aim-did-rfc9421/key-substituted.json
 2f69a4cd34e51adbce8db1c3db0db15b0be29a3a5861d111947a4eb23b3e54d7  fixtures/composition/aim-did-rfc9421/signature-alone.json

@@ -16,7 +16,7 @@ Three positive shapes per the [aps-conformance-suite](https://github.com/aeoess/
 
 All three pin to the RFC 8032 §7.1 keypair so verifiers running both suites produce byte-identical results for the signature-alone case.
 
-Plus three negative fixtures a conforming verifier MUST reject: `signature-tampered.json` (signature bytes altered in flight), `key-substituted.json` (DID Document serves a different valid Ed25519 key than the one that signed), and `body-tampered.json` (body modified and Content-Digest recomputed, signature not re-produced). See [`aim-did-rfc9421/README.md`](./aim-did-rfc9421/README.md) for the full table.
+Plus four negative fixtures a conforming verifier MUST reject: `signature-tampered.json` (signature bytes altered in flight), `key-substituted.json` (DID Document serves a different valid Ed25519 key than the one that signed), `body-tampered.json` (body modified and Content-Digest recomputed, signature not re-produced), and `cross-suite-mismatch.json` (declares byte-identity with Envoys §14 Vector 1, but the signature that verifies was produced by a different key). See [`aim-did-rfc9421/README.md`](./aim-did-rfc9421/README.md) for the full table.
 
 ## Planned fixtures
 

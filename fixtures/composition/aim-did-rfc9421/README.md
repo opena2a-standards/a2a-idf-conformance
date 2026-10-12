@@ -16,8 +16,9 @@ A2A-IDF identity-framework composition fixtures. Each fixture exercises:
 | [`signature-tampered.json`](./signature-tampered.json) | REJECT[SIGNATURE_INVALID] | Vector 1 with altered signature bytes | none |
 | [`key-substituted.json`](./key-substituted.json) | REJECT[SIGNATURE_INVALID] | Vector 1 signature, DID Document serving the RFC 8032 §7.1 Test 2 key instead | none |
 | [`body-tampered.json`](./body-tampered.json) | REJECT[SIGNATURE_INVALID] | Vector 2 signature over a body later modified (Content-Digest recomputed, no re-sign) | none |
+| [`cross-suite-mismatch.json`](./cross-suite-mismatch.json) | REJECT[CROSS_SUITE_MISMATCH] | Vector 1 request signed by the RFC 8032 §7.1 Test 2 key, DID Document serving that key; declares byte-identity with Vector 1 and `expected.signatureBase64` carries the Vector 1 bytes | none |
 
-The negatives each pin exactly one defect against a fixture that is otherwise valid, so a verifier that rejects for the wrong reason still fails the suite (the reject must occur at the Ed25519 verification of the resolved key, not at fixture-integrity stages).
+The negatives each pin exactly one defect against a fixture that is otherwise valid, so a verifier that rejects for the wrong reason still fails the suite (the reject must occur at the Ed25519 verification of the resolved key or, for `cross-suite-mismatch`, at the cross-suite byte-match of the verified signature, not at fixture-integrity stages).
 
 ## Cross-suite parity
 
@@ -33,7 +34,7 @@ The reference verifiers in [`../../scripts/`](../../scripts/) check the wire lay
 - Reconstruct the RFC 9421 signature base
 - Resolve the keyid per A2A-IDF §6 (this fixture set pins the `application/did+json` branch)
 - Verify the Ed25519 signature against the resolved public key
-- Cross-suite byte-match check against the declared Envoys §14 vector
+- Cross-suite byte-match of the verified signature bytes (parsed from the `Signature` header) against the declared Envoys §14 vector
 
 Deeper envelope verification (responder signature for `bilateral-receipt`, per-link signatures and chain-rule enforcement for `delegation-chain-3link`) is a planned extension of the reference verifiers. The current fixtures pin the envelope shapes and invariants so consumers can build envelope verifiers against a known-good wire layer.
 
@@ -44,4 +45,4 @@ node ../../scripts/verify.mjs .
 python3 ../../scripts/verify.py .
 ```
 
-Both reference verifiers produce `PASS` on every fixture: the positives verify (`observed: ACCEPT`) and the negatives are rejected for the pinned reason (`observed: REJECT[SIGNATURE_INVALID]`).
+Both reference verifiers produce `PASS` on every fixture: the positives verify (`observed: ACCEPT`) and the negatives are rejected for the pinned reason (`observed: REJECT[SIGNATURE_INVALID]`, or `observed: REJECT[CROSS_SUITE_MISMATCH]` for `cross-suite-mismatch.json`).

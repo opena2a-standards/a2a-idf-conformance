@@ -287,27 +287,29 @@ function verifyCompositionFixture(fixture, path) {
   const baseBytes = Buffer.from(base, "utf-8");
   const ok = cryptoVerify(null, baseBytes, publicKey, sigBytes);
 
-  // The only modeled negative outcome at the wire layer is a signature that
-  // fails to verify against the resolved key — whether tampered bytes, a
-  // substituted key, or a tampered body (content-digest is a signed component).
-  const verdict = ok ? "ACCEPT" : "REJECT";
-  const gate = gateVerdict(path, expected, verdict, "SIGNATURE_INVALID");
-  if (!gate.ok) return gate;
-
-  // Bonus: cross-suite byte-match check, if declared.
+  // A signature that fails to verify against the resolved key (tampered bytes,
+  // a substituted key, or a tampered body, since content-digest is a signed
+  // component) is SIGNATURE_INVALID. When the fixture declares an Envoys
+  // byte-match, a signature that verifies but is not the pinned vector is
+  // CROSS_SUITE_MISMATCH. The comparison uses the bytes just verified, never
+  // expected.signatureBase64, which a fixture can set independently of the
+  // Signature header.
+  let observed = { verdict: "ACCEPT" };
   const cse = fixture.crossSuiteEquivalence?.envoys;
-  if (cse?.byteIdentical === true && cse.expectedSignatureBase64) {
-    if (expected.signatureBase64 !== cse.expectedSignatureBase64) {
-      return {
-        path,
-        ok: false,
-        observed: gate.observed,
-        stage: "cross-suite-equivalence",
-        reason: `fixture signature does not byte-match Envoys ${cse.vector}`,
+  if (!ok) {
+    observed = { verdict: "REJECT", category: "SIGNATURE_INVALID" };
+  } else if (cse?.byteIdentical === true && cse.expectedSignatureBase64) {
+    if (sigBytes.toString("base64") !== cse.expectedSignatureBase64) {
+      observed = {
+        verdict: "REJECT",
+        category: "CROSS_SUITE_MISMATCH",
+        reason: `verified signature does not byte-match Envoys ${cse.vector}`,
       };
     }
   }
 
+  const gate = gateVerdict(path, expected, observed.verdict, observed.category);
+  if (!gate.ok && observed.reason) gate.reason += ` (${observed.reason})`;
   return gate;
 }
 
