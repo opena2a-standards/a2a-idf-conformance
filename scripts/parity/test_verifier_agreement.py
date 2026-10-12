@@ -41,6 +41,18 @@ class Case(NamedTuple):
     fixture: dict
     observed: str  # "ACCEPT" or "REJECT[CATEGORY]"
     pinned: str | None = None  # written to `expected`; defaults to `observed`
+    nested: str | None = None  # JSON text written in place of the string NESTED
+
+
+# A placeholder for a value too deeply nested for json.dumps to write; the
+# Case's `nested` text replaces it in the written fixture.
+NESTED = "nested-value-placeholder"
+
+# Deeper than a recursive walk of the attestation reached in either verifier
+# (verify.mjs overflowed its call stack at 3,000 levels, verify.py exceeded its
+# recursion limit at 900), and shallower than json.loads on Python 3.12 parses
+# (8,000 levels load, 10,000 do not).
+DEPTH = 5000
 
 
 def identity_params(fixture: dict) -> dict:
@@ -126,6 +138,25 @@ CASES = [
     Case("lone-surrogate-in-property-name", organization(**{"note\ud800": "x"}), "REJECT[SHAPE_INVALID]"),
     Case("lone-surrogate-in-array", organization(tags=["a", "b\udfff"]), "REJECT[SHAPE_INVALID]"),
     Case("surrogate-pair-is-well-formed", organization(**{"subject.organization": "Ex\U0001f600"}), "REJECT[SIGNATURE_INVALID]"),
+    # A member added after signing is a signature reject at any nesting depth.
+    Case(
+        "deeply-nested-array-member",
+        organization(deep=NESTED),
+        "REJECT[SIGNATURE_INVALID]",
+        nested="[" * DEPTH + "]" * DEPTH,
+    ),
+    Case(
+        "deeply-nested-object-member",
+        organization(deep=NESTED),
+        "REJECT[SIGNATURE_INVALID]",
+        nested='{"a":' * DEPTH + '"x"' + "}" * DEPTH,
+    ),
+    Case(
+        "lone-surrogate-deeply-nested",
+        organization(deep=NESTED),
+        "REJECT[SHAPE_INVALID]",
+        nested="[" * DEPTH + '"\\udc00"' + "]" * DEPTH,
+    ),
     # A reject reason that quotes a lone surrogate is still printed as FAIL, not ERROR.
     Case("lone-surrogate-in-reason", attestation_domain("example.com\udc00"), "REJECT[DOMAIN_MISMATCH]", pinned="ACCEPT"),
 ]
@@ -155,7 +186,10 @@ class VerifierAgreementTests(unittest.TestCase):
         root.mkdir()
         for case in CASES:
             case.fixture["expected"] = expected_block(case.pinned or case.observed)
-            (root / f"{case.name}.json").write_text(json.dumps(case.fixture))
+            text = json.dumps(case.fixture)
+            if case.nested is not None:
+                text = text.replace(json.dumps(NESTED), case.nested)
+            (root / f"{case.name}.json").write_text(text)
         cls.records = {}
         cls.output = {}
         for verifier, command in VERIFIERS.items():

@@ -378,14 +378,44 @@ function b64urlNoPad(buf) {
 // Within that domain, sorted-key compact JSON is exactly the JCS form.
 // Array.prototype.sort() compares UTF-16 code units, which is the property
 // order RFC 8785 §3.2.3 requires (including keys outside the BMP).
-function jcs(value) {
-  if (Array.isArray(value)) return `[${value.map(jcs).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const keys = Object.keys(value).sort();
-    return `{${keys.map((k) => `${JSON.stringify(k)}:${jcs(value[k])}`).join(",")}}`;
+// The walk keeps its own stack instead of recursing, so a deeply nested member
+// reaches a verdict here and in verify.py rather than overflowing the call stack.
+// A string on the stack is output text; a { value } entry is still to be written.
+function jcs(root) {
+  const out = [];
+  const todo = [{ value: root }];
+  const pushReversed = (entries) => {
+    for (let i = entries.length - 1; i >= 0; i--) todo.push(entries[i]);
+  };
+  while (todo.length > 0) {
+    const entry = todo.pop();
+    if (typeof entry === "string") {
+      out.push(entry);
+      continue;
+    }
+    const { value } = entry;
+    if (Array.isArray(value)) {
+      const entries = ["["];
+      value.forEach((v, i) => {
+        if (i > 0) entries.push(",");
+        entries.push({ value: v });
+      });
+      entries.push("]");
+      pushReversed(entries);
+    } else if (value !== null && typeof value === "object") {
+      const entries = ["{"];
+      Object.keys(value)
+        .sort()
+        .forEach((k, i) => entries.push(`${i > 0 ? "," : ""}${JSON.stringify(k)}:`, { value: value[k] }));
+      entries.push("}");
+      pushReversed(entries);
+    } else if (typeof value === "string") {
+      out.push(JSON.stringify(value));
+    } else {
+      throw new Error(`value type outside the fixture JCS domain: ${typeof value}`);
+    }
   }
-  if (typeof value === "string") return JSON.stringify(value);
-  throw new Error(`value type outside the fixture JCS domain: ${typeof value}`);
+  return out.join("");
 }
 
 function isNonEmptyString(v) {
@@ -408,11 +438,18 @@ const LONE_SURROGATE_RE = /[\uD800-\uDFFF]/u;
 
 // True when a string or property name anywhere in `value` holds a lone
 // surrogate, which has no UTF-8 encoding and which RFC 8785 §3.2.2.2 forbids.
-function hasLoneSurrogate(value) {
-  if (typeof value === "string") return LONE_SURROGATE_RE.test(value);
-  if (Array.isArray(value)) return value.some(hasLoneSurrogate);
-  if (value !== null && typeof value === "object") {
-    return Object.entries(value).some(([k, v]) => LONE_SURROGATE_RE.test(k) || hasLoneSurrogate(v));
+// Iterative for the reason given at jcs().
+function hasLoneSurrogate(root) {
+  const todo = [root];
+  while (todo.length > 0) {
+    const value = todo.pop();
+    if (typeof value === "string") {
+      if (LONE_SURROGATE_RE.test(value)) return true;
+    } else if (Array.isArray(value)) {
+      for (const v of value) todo.push(v);
+    } else if (value !== null && typeof value === "object") {
+      for (const [k, v] of Object.entries(value)) todo.push(k, v);
+    }
   }
   return false;
 }
@@ -584,9 +621,11 @@ function verifyFixture(path) {
   return verifyCompositionFixture(fixture, path);
 }
 
+// A path that does not exist is returned as a fixture, so reading it fails
+// inside the per-fixture loop and is reported as ERROR, as verify.py does.
 function collectFixtures(arg) {
   const abs = resolve(arg);
-  if (!statSync(abs).isDirectory()) return [abs];
+  if (!statSync(abs, { throwIfNoEntry: false })?.isDirectory()) return [abs];
   const out = [];
   const walk = (dir) => {
     for (const entry of readdirSync(dir).sort()) {
@@ -633,7 +672,9 @@ function main() {
     } catch (err) {
       failCount++;
       console.log(`ERROR ${abs}`);
-      console.log(`      ${err.stack ?? err.message}`);
+      // A failed system call (ENOENT, EACCES, EISDIR) is a problem with the input
+      // and its message names the path; a stack trace is kept for a verifier fault.
+      console.log(`      ${err.syscall !== undefined ? err.message : (err.stack ?? err.message)}`);
     }
   }
   console.log(`summary: ${passCount} pass, ${failCount} fail (${paths.length} fixtures)`);
