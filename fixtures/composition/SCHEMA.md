@@ -63,6 +63,8 @@ The verifier rehashes `body` using the algorithm declared in `expected.contentDi
 
 The verifier serializes parameters in the order `keyid; created; nonce; tag`. Fixtures must use the same order to byte-match `expected.signatureInput` and `expected.signatureBase`.
 
+A JSON number does not record how it was written, so `created` is written as JavaScript writes the number it holds: `1714000000.0` and `1714000000` are both written `created=1714000000`, in both reference verifiers.
+
 A `tag` of JSON `null` is treated as an absent tag: it is omitted from the signature base and the Signature-Input header, never serialized as `tag="null"`.
 
 **Tag rule (Envoys signature/v1 §4.3).** A verifier accepts a `tag` of `a2a-message` and treats an absent (or `null`) tag as `a2a-message` for back-compat. Any other tag value marks a signature produced for a different application: the verifier rejects it with `TAG_MISMATCH`, even when the signature verifies. The tag is an application requirement on the signature parameters (RFC 9421 §3.2.1), checked after the signature base and Signature-Input are reconstructed and before key resolution and Ed25519 verification. Pinned by the pair `aim-did-rfc9421/signature-tag-absent.json` (ACCEPT) and `aim-did-rfc9421/signature-tag-foreign.json` (REJECT[TAG_MISMATCH]). The place of the rule before Ed25519 verification is pinned by `aim-did-rfc9421/signature-tag-foreign-tampered.json`, which carries a foreign tag and an altered signature and is REJECT[TAG_MISMATCH], not REJECT[SIGNATURE_INVALID].

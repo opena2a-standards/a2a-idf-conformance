@@ -120,12 +120,16 @@ def extract_public_key(keyid_resolution: dict[str, Any]) -> Ed25519PublicKey:
     if not isinstance(methods, list) or not methods:
         raise ValueError("DID Document has no verificationMethod entries")
 
+    # An entry that is not a JSON object (null among them) carries no key
+    # encoding, as in verify.mjs.
     preferred_id = _pick_assertion_method_id(doc)
     method = None
     if preferred_id is not None:
-        method = next((m for m in methods if m.get("id") == preferred_id), None)
+        method = next(
+            (m for m in methods if isinstance(m, dict) and m.get("id") == preferred_id), None
+        )
     if method is None:
-        method = methods[0]
+        method = _as_dict(methods[0])
 
     mb = method.get("publicKeyMultibase")
     if isinstance(mb, str):
@@ -158,6 +162,9 @@ def _pick_assertion_method_id(doc: dict[str, Any]) -> str | None:
 
 
 def _pem_spki_to_ed25519(pem: str) -> Ed25519PublicKey:
+    """A PEM whose body is not base64 is reported in the same words as one that
+    holds another key type, as verify.mjs words both (the base64 module's own
+    message is "Incorrect padding")."""
     body = (
         pem.replace("-----BEGIN PUBLIC KEY-----", "")
         .replace("-----END PUBLIC KEY-----", "")
@@ -165,10 +172,13 @@ def _pem_spki_to_ed25519(pem: str) -> Ed25519PublicKey:
         .replace("\r", "")
         .strip()
     )
-    der = base64.b64decode(body)
+    try:
+        der = base64.b64decode(body)
+    except ValueError:
+        der = b""
     prefix = bytes.fromhex("302a300506032b6570032100")
     if not der.startswith(prefix) or len(der) != len(prefix) + 32:
-        raise ValueError("SPKI is not an Ed25519 public key")
+        raise ValueError("compact-form publicKeyPem is not an Ed25519 SPKI PEM")
     return Ed25519PublicKey.from_public_bytes(der[len(prefix) :])
 
 
@@ -184,8 +194,39 @@ def _b64url_nopad(data: bytes) -> str:
 # --- signature base (RFC 9421 §2.5) -------------------------------------------
 
 
+def _js_number_text(v: int | float) -> str:
+    """A JSON number as verify.mjs writes it in a template string. JSON.parse
+    reads every number as a double, and a JSON number does not record how it
+    was written, so 1714000000.0 is written 1714000000 there (str() writes
+    1714000000.0), and 12345678901234567890 is written 12345678901234567000.
+    repr() gives the same shortest digits that read back as the double; this
+    lays them out as ECMAScript Number::toString does."""
+    x = float(v)
+    if math.isinf(x):
+        return "Infinity" if x > 0 else "-Infinity"
+    if x == 0:
+        return "0"
+    sign = "-" if x < 0 else ""
+    mantissa, _, exponent = repr(abs(x)).partition("e")
+    whole, _, fraction = mantissa.partition(".")
+    digits = (whole + fraction).lstrip("0")
+    # The value is 0.<digits> times 10 ** point.
+    point = len(whole) - len(whole + fraction) + len(digits) + int(exponent or "0")
+    digits = digits.rstrip("0")
+    if len(digits) <= point <= 21:
+        return sign + digits + "0" * (point - len(digits))
+    if 0 < point <= 21:
+        return f"{sign}{digits[:point]}.{digits[point:]}"
+    if -6 < point <= 0:
+        return f"{sign}0.{'0' * -point}{digits}"
+    fraction = f".{digits[1:]}" if len(digits) > 1 else ""
+    return f"{sign}{digits[0]}{fraction}e{'+' if point > 0 else '-'}{abs(point - 1)}"
+
+
 def serialize_params(p: dict[str, Any]) -> str:
-    parts = [f'keyid="{p["keyid"]}"', f'created={p["created"]}', f'nonce="{p["nonce"]}"']
+    # The schema stage has checked that `created` is a JSON integer.
+    created = _js_number_text(p["created"])
+    parts = [f'keyid="{p["keyid"]}"', f"created={created}", f'nonce="{p["nonce"]}"']
     # A null tag is treated as an absent tag, as in verify.mjs.
     if "tag" in p and p["tag"] is not None:
         parts.append(f'tag="{p["tag"]}"')
@@ -773,13 +814,18 @@ def evaluate_domain_verified(
         return _reject(
             "DOMAIN_MISMATCH", f"record name {record_name} != _a2a-identity.{domain}"
         )
+    # A field the record does not carry is quoted as (missing), as in verify.mjs.
     fields: dict[str, str] = {}
     for part in record_value.split("; "):
         eq = part.find("=")
         if eq > 0:
             fields[part[:eq]] = part[eq + 1 :]
+
+    def field(name: str) -> str:
+        return _reason_text(fields.get(name, _MISSING))
+
     if fields.get("v") != "a2a1":
-        return _reject("SHAPE_INVALID", f"unsupported record version: {fields.get('v')}")
+        return _reject("SHAPE_INVALID", f"unsupported record version: {field('v')}")
     urn_parts = p["agentId"].split(":")
     if urn_parts[3] != domain:
         return _reject(
@@ -787,13 +833,13 @@ def evaluate_domain_verified(
         )
     if fields.get("agent") != urn_parts[4]:
         return _reject(
-            "AGENT_MISMATCH", f"record agent {fields.get('agent')} != agentId name {urn_parts[4]}"
+            "AGENT_MISMATCH", f"record agent {field('agent')} != agentId name {urn_parts[4]}"
         )
     if fields.get("kid") != pk["kid"]:
-        return _reject("KID_MISMATCH", f"record kid {fields.get('kid')} != declared kid {pk['kid']}")
+        return _reject("KID_MISMATCH", f"record kid {field('kid')} != declared kid {pk['kid']}")
     fp = _b64url_nopad(hashlib.sha256(_b64url_decode(pk["x"])).digest())
     if fields.get("fp") != fp:
-        return _reject("FINGERPRINT_MISMATCH", f"record fp {fields.get('fp')} != computed {fp}")
+        return _reject("FINGERPRINT_MISMATCH", f"record fp {field('fp')} != computed {fp}")
     return {"verdict": "ACCEPT"}
 
 
@@ -843,11 +889,15 @@ def evaluate_organization_verified(
         sig = _b64url_decode(att["signature"])
     except Exception:
         sig = b""
-    if len(sig) != 64:
-        return _reject("SIGNATURE_INVALID", "signature is not 64 bytes of base64url")
-    try:
-        issuer_key.verify(sig, tbs)
-    except InvalidSignature:
+    # A signature that is not 64 bytes does not verify, and is reported in the
+    # same words, as in verify.mjs.
+    verified = len(sig) == 64
+    if verified:
+        try:
+            issuer_key.verify(sig, tbs)
+        except InvalidSignature:
+            verified = False
+    if not verified:
         return _reject(
             "SIGNATURE_INVALID", "registry signature does not verify over the attestation JCS form"
         )
@@ -1093,37 +1143,40 @@ def verify_fixture(path: Path) -> tuple[bool, str | None, list[str]]:
     return verify_composition_fixture(fixture)
 
 
-def _is_real_directory(path: Path) -> bool:
+def _fixture_listing(path: Path) -> tuple[Path, Exception | None] | None:
+    """The listing of a `*.json` path met during the walk, or None for one that
+    is a directory once symlinks are followed (a symlink to a directory is not
+    a fixture). A regular file is listed, and so is a path whose status cannot
+    be read at all (a dangling symlink, a symlink loop), which is then reported
+    as ERROR when it is read. A path of any other kind (a socket, a FIFO, a
+    device) is listed with an error and never read, as in verify.mjs: reading
+    a socket fails, and reading a FIFO waits until a writer opens it."""
     try:
-        return stat.S_ISDIR(os.lstat(path).st_mode)
+        mode = os.stat(path).st_mode
     except OSError:
-        return False
+        return (path, None)
+    if stat.S_ISDIR(mode):
+        return None
+    if stat.S_ISREG(mode):
+        return (path, None)
+    return (path, ValueError(f"not a regular file: {path}"))
 
 
-def _is_fixture_file(path: Path) -> bool:
-    """A `*.json` path that is a file, or one that cannot be read at all (a
-    dangling symlink, a symlink loop), which is then reported as ERROR."""
-    if not path.name.endswith(".json"):
-        return False
-    try:
-        return stat.S_ISREG(os.stat(path).st_mode)
-    except OSError:
-        return True
-
-
-def collect_fixtures(arg: str) -> list[tuple[Path, OSError | None]]:
+def collect_fixtures(arg: str) -> list[tuple[Path, Exception | None]]:
     """The fixtures `arg` names, each with the error that kept it from being
     listed (None when it was listed). A path that is not a directory is
     returned as it is, so one that cannot be read (missing, a symlink loop,
     no read permission) is reported as ERROR when it is read. A directory is
-    walked for `*.json` files without following symlinks to directories, and
-    a directory that cannot be listed is returned with its error, so a
-    permissions problem is reported as ERROR rather than read as a pass. The
-    path is made absolute without resolving symlinks, as in verify.mjs."""
+    walked for `*.json` files without following symlinks to directories. A
+    directory that cannot be listed, and an entry whose status cannot be read
+    (every entry of a directory that can be listed but not searched, which may
+    be a directory of fixtures), is returned with its error, so a permissions
+    problem is reported as ERROR rather than read as a pass. The path is made
+    absolute without resolving symlinks, as in verify.mjs."""
     path = Path(os.path.abspath(arg))
     if not os.path.isdir(path):
         return [(path, None)]
-    found: list[tuple[Path, OSError | None]] = []
+    found: list[tuple[Path, Exception | None]] = []
     pending = [path]
     while pending:
         directory = pending.pop()
@@ -1134,10 +1187,17 @@ def collect_fixtures(arg: str) -> list[tuple[Path, OSError | None]]:
             continue
         for name in names:
             entry = directory / name
-            if _is_real_directory(entry):
+            try:
+                mode = os.lstat(entry).st_mode
+            except OSError as exc:
+                found.append((entry, exc))
+                continue
+            if stat.S_ISDIR(mode):
                 pending.append(entry)
-            elif _is_fixture_file(entry):
-                found.append((entry, None))
+            elif name.endswith(".json"):
+                listing = _fixture_listing(entry)
+                if listing is not None:
+                    found.append(listing)
     return sorted(found, key=lambda item: item[0])
 
 
@@ -1147,8 +1207,8 @@ def main() -> int:
         print("usage: python3 verify.py <fixture.json | directory> [...]", file=sys.stderr)
         return 2
 
-    # A reason line can quote a fixture string that holds a lone surrogate, which
-    # UTF-8 cannot encode: print it escaped instead of raising while reporting.
+    # A stdout that is not UTF-8 may not encode every character of a line: print
+    # such a character escaped instead of raising while reporting.
     sys.stdout.reconfigure(errors="backslashreplace")
 
     paths = [entry for arg in args for entry in collect_fixtures(arg)]
@@ -1161,20 +1221,27 @@ def main() -> int:
             ok, observed, lines = verify_fixture(path)
             if ok:
                 pass_count += 1
-                print(f"PASS  {path}")
+                _print(f"PASS  {path}")
             else:
                 fail_count += 1
-                print(f"FAIL  {path}")
+                _print(f"FAIL  {path}")
             if observed is not None:
-                print(f"      observed: {observed}")
+                _print(f"      observed: {observed}")
             for line in lines:
-                print(f"      {line}")
+                _print(f"      {line}")
         except Exception as exc:
             fail_count += 1
-            print(f"ERROR {path}")
-            print(f"      {exc}")
+            _print(f"ERROR {path}")
+            _print(f"      {exc}")
     print(f"summary: {pass_count} pass, {fail_count} fail ({len(paths)} fixtures)")
     return 0 if fail_count == 0 else 1
+
+
+def _print(line: str) -> None:
+    """Print a line that can quote a fixture string holding a lone surrogate,
+    which UTF-8 cannot encode. It is written as U+FFFD, as console.log in
+    verify.mjs writes it."""
+    print(_SURROGATE.sub("�", line))
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
 import {
   chmodSync,
   mkdirSync,
@@ -38,8 +39,8 @@ function writeVariant(t, source, mutate) {
   return path;
 }
 
-function runVerifier([command, ...args], path) {
-  return spawnSync(command, [...args, path], { encoding: "utf8" });
+function runVerifier([command, ...args], path, options = {}) {
+  return spawnSync(command, [...args, path], { encoding: "utf8", ...options });
 }
 
 // A copy of the cross-suite-mismatch fixture that pins ACCEPT, so a verifier
@@ -296,6 +297,7 @@ test("a schema reason words a number the same way in both verifiers", (t) => {
     ["negative-zero", "-0.0", "0"],
     ["largest-safe-integer", "9007199254740991", "9007199254740991"],
     ["smallest-safe-integer", "-9007199254740991", "-9007199254740991"],
+    ["first-unsafe-integer", "9007199254740992", "a JSON integer"],
     ["past-safe-integers", "9007199254740993", "a JSON integer"],
     ["twenty-digits", "12345678901234567890", "a JSON integer"],
     ["small-fraction", "1e-7", "a JSON number"],
@@ -326,6 +328,196 @@ test("a schema reason words a number the same way in both verifiers", (t) => {
       "FAIL",
       "stage:  schema",
       "reason: level is present but is not a JSON integer",
+    ];
+  }
+  const blocks = runOverVariants(t, variants);
+  assert.deepEqual(blocks.node, expected);
+  assert.deepEqual(blocks.python, blocks.node);
+});
+
+// A JSON number does not record how it was written, so `created` enters the
+// signature base as JavaScript writes the number: 1714000000.0 as 1714000000,
+// as verify.mjs wrote it and verify.py did not. A copy whose `created` is
+// another value pins that value's text in its signature base and
+// Signature-Input header, so it reaches the signature check, which fails.
+test("the signature base writes created the same way in both verifiers", (t) => {
+  const variants = {};
+  const expected = {};
+  for (const [name, literal, text] of [
+    ["fraction-part", "1714000000.0", "1714000000"],
+    ["exponent", "1.714e9", "1714000000"],
+    ["past-safe-integers", "12345678901234567890", "12345678901234567000"],
+    ["exponent-form", "1e21", "1e+21"],
+  ]) {
+    variants[`${name}.json`] = literalVariant(
+      "fixtures/composition/aim-did-rfc9421/signature-alone.json",
+      (fx) => {
+        const written = `created=${fx.signatureParams.created}`;
+        for (const field of ["signatureBase", "signatureInput"]) {
+          assert.ok(fx.expected[field].includes(written), field);
+          fx.expected[field] = fx.expected[field].replace(written, `created=${text}`);
+        }
+        fx.signatureParams.created = PLACEHOLDER;
+        if (text !== "1714000000") {
+          fx.expected.verifyResult = "REJECT";
+          fx.expected.rejectCategory = "SIGNATURE_INVALID";
+        }
+      },
+      literal,
+    );
+    expected[`${name}.json`] = [
+      "PASS",
+      `observed: ${text === "1714000000" ? "ACCEPT" : "REJECT[SIGNATURE_INVALID]"}`,
+    ];
+  }
+  const blocks = runOverVariants(t, variants);
+  assert.deepEqual(blocks.node, expected);
+  assert.deepEqual(blocks.python, blocks.node);
+});
+
+// A DID verificationMethod entry that is not a JSON object carries no key
+// encoding in either verifier: verify.py called .get on it and raised, and
+// verify.mjs read a member of a null entry and failed with its own TypeError.
+// An entry of the right kind later in the list is still found by its id.
+test("a verificationMethod entry that is not an object fails the same way in both verifiers", (t) => {
+  const variants = {};
+  const expected = {};
+  for (const [name, literal] of [
+    ["array", "[[]]"],
+    ["null", "[null]"],
+    ["string", '["key-1"]'],
+    ["integer", "[5]"],
+    ["boolean", "[true]"],
+  ]) {
+    variants[`${name}.json`] = literalVariant(
+      "fixtures/composition/aim-did-rfc9421/bilateral-receipt.json",
+      (fx) => (fx.keyidResolution.document.verificationMethod = PLACEHOLDER),
+      literal,
+    );
+    expected[`${name}.json`] = [
+      "FAIL",
+      "stage:  public-key-extraction",
+      "reason: DID verificationMethod has no usable Ed25519 key encoding",
+    ];
+  }
+  variants["null-before-the-referenced-entry.json"] = literalVariant(
+    "fixtures/composition/aim-did-rfc9421/bilateral-receipt.json",
+    (fx) => fx.keyidResolution.document.verificationMethod.unshift(null),
+  );
+  expected["null-before-the-referenced-entry.json"] = ["PASS", "observed: ACCEPT"];
+  const blocks = runOverVariants(t, variants);
+  assert.deepEqual(blocks.node, expected);
+  assert.deepEqual(blocks.python, blocks.node);
+});
+
+// A compact-form publicKeyPem that does not hold an Ed25519 SPKI public key
+// fails at stage public-key-extraction in one wording. verify.mjs passed the
+// crypto library's error through (error:1E08010C:DECODER routines::unsupported)
+// and took a key of another type, reaching REJECT[SIGNATURE_INVALID] where
+// verify.py stopped; verify.py passed the base64 module's error through
+// (Incorrect padding).
+test("a publicKeyPem that is not an Ed25519 SPKI PEM fails the same way in both verifiers", (t) => {
+  const publicPem = (type, options) =>
+    generateKeyPairSync(type, options).publicKey.export({ type: "spki", format: "pem" });
+  const variants = {};
+  const expected = {};
+  for (const [name, pem] of [
+    ["empty", ""],
+    ["not-a-pem", "not a pem"],
+    ["rsa", publicPem("rsa", { modulusLength: 2048 })],
+    ["ec-p256", publicPem("ec", { namedCurve: "P-256" })],
+    ["x25519", publicPem("x25519")],
+    ["ed448", publicPem("ed448")],
+  ]) {
+    variants[`${name}.json`] = literalVariant(
+      "fixtures/composition/hippo-rfc9421/signature-alone-no-tag.json",
+      (fx) => (fx.keyidResolution.publicKeyPem = pem),
+    );
+    expected[`${name}.json`] = [
+      "FAIL",
+      "stage:  public-key-extraction",
+      "reason: compact-form publicKeyPem is not an Ed25519 SPKI PEM",
+    ];
+  }
+  const blocks = runOverVariants(t, variants);
+  assert.deepEqual(blocks.node, expected);
+  assert.deepEqual(blocks.python, blocks.node);
+});
+
+// Reject reasons of level fixtures that the two verifiers worded differently:
+// a field the DNS TXT record does not carry (undefined and None), identity
+// params that are a JSON array (verify.mjs took an array as params), a Level 2
+// signature that is not 64 bytes (verify.py had a reason of its own), and a
+// quoted string holding a lone surrogate, which UTF-8 cannot encode (U+FFFD
+// from verify.mjs, \ud800 from verify.py). The variants pin ACCEPT, so the
+// reason is printed.
+test("level reject reasons are worded the same way in both verifiers", (t) => {
+  const LEVEL_1 = "fixtures/levels/level-1-domain-verified.json";
+  const LEVEL_2 = "fixtures/levels/level-2-organization-verified.json";
+  const record = Object.fromEntries(
+    JSON.parse(readFileSync(join(REPO, LEVEL_1), "utf8"))
+      .evidence.dnsTxt.recordValue.split("; ")
+      .map((part) => part.split("=", 2)),
+  );
+  const withoutField = (name) => (fx) => {
+    fx.evidence.dnsTxt.recordValue = Object.entries(record)
+      .filter(([key]) => key !== name)
+      .map(([key, value]) => `${key}=${value}`)
+      .join("; ");
+  };
+  const organizationAttestation = (fx) =>
+    identityParams(fx).attestations.find((a) => a.type === "organization");
+  const variants = {};
+  const expected = {};
+  for (const [name, source, mutate, category, reason, literal] of [
+    ["record-without-v", LEVEL_1, withoutField("v"), "SHAPE_INVALID", "unsupported record version: (missing)"],
+    ["record-agent-only", LEVEL_1, (fx) => (fx.evidence.dnsTxt.recordValue = "agent=x"), "SHAPE_INVALID", "unsupported record version: (missing)"],
+    ["record-without-agent", LEVEL_1, withoutField("agent"), "AGENT_MISMATCH", "record agent (missing) != agentId name financial-advisor"],
+    ["record-without-kid", LEVEL_1, withoutField("kid"), "KID_MISMATCH", `record kid (missing) != declared kid ${record.kid}`],
+    ["record-without-fp", LEVEL_1, withoutField("fp"), "FINGERPRINT_MISMATCH", `record fp (missing) != computed ${record.fp}`],
+    [
+      "params-array",
+      LEVEL_1,
+      (fx) => (fx.agentCard.capabilities.extensions[0].params = []),
+      "SHAPE_INVALID",
+      "agent-identity extension (or its params) missing",
+    ],
+    [
+      "signature-not-base64url",
+      LEVEL_2,
+      (fx) => (organizationAttestation(fx).signature = "x"),
+      "SIGNATURE_INVALID",
+      "registry signature does not verify over the attestation JCS form",
+    ],
+    [
+      "signature-of-3-bytes",
+      LEVEL_2,
+      (fx) => (organizationAttestation(fx).signature = "AAAA"),
+      "SIGNATURE_INVALID",
+      "registry signature does not verify over the attestation JCS form",
+    ],
+    [
+      "lone-surrogate",
+      LEVEL_1,
+      (fx) => (identityParams(fx).identityLevel = PLACEHOLDER),
+      "SHAPE_INVALID",
+      "unknown identityLevel: X�",
+      '"X\\ud800"',
+    ],
+  ]) {
+    variants[`${name}.json`] = literalVariant(
+      source,
+      (fx) => {
+        mutate(fx);
+        fx.expected = { verifyResult: "ACCEPT" };
+      },
+      literal,
+    );
+    expected[`${name}.json`] = [
+      "FAIL",
+      `observed: REJECT[${category}]`,
+      "stage:  verdict",
+      `reason: verify result REJECT[${category}] != expected ACCEPT (${reason})`,
     ];
   }
   const blocks = runOverVariants(t, variants);
@@ -382,7 +574,7 @@ function scratchFixtureDir(t) {
     rmSync(dir, { recursive: true, force: true });
   });
   writeFileSync(join(dir, "valid.json"), readFileSync(join(REPO, "fixtures/levels/level-0-self-asserted.json")));
-  return { dir, lock: (path) => (locked.push(path), chmodSync(path, 0o000)) };
+  return { dir, lock: (path, mode = 0o000) => (locked.push(path), chmodSync(path, mode)) };
 }
 
 test("a symlink loop is reported as ERROR by both verifiers", { skip: process.platform === "win32" }, (t) => {
@@ -440,13 +632,14 @@ test("a symlink to a directory is not followed during the walk by either verifie
   }
 });
 
-// A symlink to a directory is the only `*.json` entry the walk of verify.mjs
-// passes over. An entry of another kind that cannot be read as a file (here a
-// Unix socket) is listed and reported as ERROR, not skipped by a run that then
-// exits 0. verify.py passes over a socket, so it is not run here. The socket
-// is bound by a relative name from inside the directory, because a socket
-// address holds about 100 bytes.
-test("verify.mjs reports a socket named *.json met during the walk as ERROR", { skip: process.platform === "win32" }, (t) => {
+// A symlink to a directory is the only `*.json` entry the walk passes over. An
+// entry that is neither a regular file nor a directory (here a Unix socket and
+// a FIFO) is listed and reported as ERROR without being read, in both
+// verifiers: verify.py passed over it and exited 0, and verify.mjs read it, so
+// a FIFO held the run until a writer opened it. The socket is bound by a
+// relative name from inside the directory, because a socket address holds
+// about 100 bytes. The timeout ends a run that waits on the FIFO.
+test("a socket or a FIFO named *.json met during the walk is reported as ERROR by both verifiers", { skip: process.platform === "win32" }, (t) => {
   const { dir } = scratchFixtureDir(t);
   const bound = spawnSync(
     VERIFIERS.python[0],
@@ -454,14 +647,45 @@ test("verify.mjs reports a socket named *.json met during the walk as ERROR", { 
     { cwd: dir, encoding: "utf8" },
   );
   assert.equal(bound.status, 0, bound.stderr);
-  assertErrorEntries(
-    "node",
-    runVerifier(VERIFIERS.node, dir),
-    dir,
-    [["socket.json", /\bopen\b/]],
-    "summary: 1 pass, 1 fail (2 fixtures)",
-  );
+  const made = spawnSync("mkfifo", [join(dir, "fifo.json")], { encoding: "utf8" });
+  assert.equal(made.status, 0, made.stderr);
+  for (const [name, argv] of Object.entries(VERIFIERS)) {
+    assertErrorEntries(
+      name,
+      runVerifier(argv, dir, { timeout: 60_000 }),
+      dir,
+      [
+        ["socket.json", /^ {6}not a regular file: /],
+        ["fifo.json", /^ {6}not a regular file: /],
+      ],
+      "summary: 1 pass, 2 fail (3 fixtures)",
+    );
+  }
 });
+
+// A directory that can be listed but not searched names its entries and does
+// not give their status, so neither verifier can tell a directory of fixtures
+// from a file among them. Each entry is reported as ERROR under its own path:
+// both verifiers passed over the subdirectory and exited 0.
+test(
+  "the entries of a directory that can be listed but not searched are reported as ERROR by both verifiers",
+  { skip: process.platform === "win32" || process.getuid?.() === 0 },
+  (t) => {
+    const { dir, lock } = scratchFixtureDir(t);
+    mkdirSync(join(dir, "locked", "sub"), { recursive: true });
+    writeFileSync(join(dir, "locked", "sub", "a.json"), readFileSync(join(dir, "valid.json")));
+    writeFileSync(join(dir, "locked", "b.json"), readFileSync(join(dir, "valid.json")));
+    lock(join(dir, "locked"), 0o400);
+    const errors = [
+      [join("locked", "b.json"), NO_PERMISSION],
+      [join("locked", "sub"), NO_PERMISSION],
+    ];
+    for (const [name, argv] of Object.entries(VERIFIERS)) {
+      assertErrorEntries(`${name} (named)`, runVerifier(argv, join(dir, "locked")), dir, errors, "summary: 0 pass, 2 fail (2 fixtures)");
+      assertErrorEntries(`${name} (walked)`, runVerifier(argv, dir), dir, errors, "summary: 1 pass, 2 fail (3 fixtures)");
+    }
+  },
+);
 
 test(
   "a directory that cannot be listed is reported as ERROR by both verifiers",
