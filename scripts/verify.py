@@ -72,7 +72,9 @@ def base58btc_decode(s: str) -> bytes:
     for ch in s:
         value = BASE58_ALPHABET.find(ch)
         if value < 0:
-            raise ValueError(f"invalid base58 character: {ch!r}")
+            # The character as it is, as verify.mjs words it: repr() writes a
+            # Python literal ('0', and '\ud800' for a lone surrogate).
+            raise ValueError(f"invalid base58 character: {ch}")
         carry = value
         for j in range(len(out)):
             carry += out[j] * 58

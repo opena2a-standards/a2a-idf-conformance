@@ -485,6 +485,38 @@ test("a publicKeyPem that is not an Ed25519 SPKI PEM fails the same way in both 
   assert.deepEqual(blocks.python, blocks.node);
 });
 
+// A publicKeyMultibase character outside the base58btc alphabet is named in
+// the reason as it is, like any string a reason quotes. verify.py wrote it as
+// a Python literal: '0' for 0, "'" for an apostrophe, '\\' for a backslash and
+// '\ud800' for a lone surrogate, which verify.mjs prints as U+FFFD.
+test("an invalid base58 character is worded the same way in both verifiers", (t) => {
+  const variants = {};
+  const expected = {};
+  for (const [name, literal, character] of [
+    ["zero", '"z0"', "0"],
+    ["after-valid-characters", '"z6Mkl"', "l"],
+    ["apostrophe", `"z'"`, "'"],
+    ["backslash", '"z\\\\"', "\\"],
+    ["non-ascii", '"zé"', "é"],
+    ["surrogate-pair", '"z\\ud83d\\ude00"', "\u{1F600}"],
+    ["lone-surrogate", '"z\\ud800"', "\u{FFFD}"],
+  ]) {
+    variants[`${name}.json`] = literalVariant(
+      "fixtures/composition/aim-did-rfc9421/bilateral-receipt.json",
+      (fx) => (fx.keyidResolution.document.verificationMethod[0].publicKeyMultibase = PLACEHOLDER),
+      literal,
+    );
+    expected[`${name}.json`] = [
+      "FAIL",
+      "stage:  public-key-extraction",
+      `reason: invalid base58 character: ${character}`,
+    ];
+  }
+  const blocks = runOverVariants(t, variants);
+  assert.deepEqual(blocks.node, expected);
+  assert.deepEqual(blocks.python, blocks.node);
+});
+
 // Reject reasons of level fixtures that the two verifiers worded differently:
 // a field the DNS TXT record does not carry (undefined and None), identity
 // params that are a JSON array (verify.mjs took an array as params), a Level 2
