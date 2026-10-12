@@ -298,41 +298,56 @@ def verify_composition_fixture(fixture: dict[str, Any]) -> tuple[bool, str | Non
     base_bytes = base.encode("utf-8")
     try:
         pubkey.verify(sig, base_bytes)
-        verdict = "ACCEPT"
+        verified = True
     except InvalidSignature:
-        verdict = "REJECT"
+        verified = False
 
-    # The only modeled negative outcome at the wire layer is a signature that
-    # fails to verify against the resolved key — whether tampered bytes, a
-    # substituted key, or a tampered body (content-digest is a signed component).
-    ok, observed, lines = gate_verdict(expected, verdict, "SIGNATURE_INVALID")
-    if not ok:
-        return False, observed, lines
-
-    # Cross-suite byte-match check, if declared.
+    # A signature that fails to verify against the resolved key (tampered bytes,
+    # a substituted key, or a tampered body, since content-digest is a signed
+    # component) is SIGNATURE_INVALID. When the fixture declares an Envoys
+    # byte-match, a signature that verifies but is not the pinned vector is
+    # CROSS_SUITE_MISMATCH. The comparison uses the bytes just verified, never
+    # expected.signatureBase64, which a fixture can set independently of the
+    # Signature header.
+    verdict, category, reason = "ACCEPT", None, None
     cse = (fixture.get("crossSuiteEquivalence") or {}).get("envoys") or {}
-    if cse.get("byteIdentical") is True and cse.get("expectedSignatureBase64"):
-        if expected.get("signatureBase64") != cse["expectedSignatureBase64"]:
-            return False, observed, [
-                "stage:  cross-suite-equivalence",
-                f"reason: fixture signature does not byte-match Envoys {cse.get('vector')}",
-            ]
+    if not verified:
+        verdict, category = "REJECT", "SIGNATURE_INVALID"
+    elif cse.get("byteIdentical") is True and cse.get("expectedSignatureBase64"):
+        if base64.b64encode(sig).decode("ascii") != cse["expectedSignatureBase64"]:
+            verdict, category = "REJECT", "CROSS_SUITE_MISMATCH"
+            reason = f"verified signature does not byte-match Envoys {cse.get('vector')}"
 
-    return True, observed, []
+    ok, observed, lines = gate_verdict(expected, verdict, category)
+    if not ok and reason and lines:
+        lines[-1] += f" ({reason})"
+    return ok, observed, lines
 
 
 # --- level fixtures (A2A-IDF §1 verification levels) ------------------------------
 
 
+def _utf16_sort_key(key: str) -> bytes:
+    # Big-endian bytes compare in the same order as 16-bit code units.
+    # surrogatepass keeps a lone surrogate sortable, as it is in JavaScript.
+    return key.encode("utf-16-be", "surrogatepass")
+
+
 def _jcs(value: Any) -> str:
     """Minimal RFC 8785 (JCS) for the restricted value domain used by level
     fixtures: objects, arrays, and strings only (no numbers, booleans, null).
-    Within that domain, sorted-key compact JSON is exactly the JCS form."""
+    Within that domain, sorted-key compact JSON is exactly the JCS form.
+
+    RFC 8785 §3.2.3 orders property names by UTF-16 code units. Python's
+    default str ordering is by code point, which disagrees once a key holds a
+    character above U+FFFF (a surrogate pair, D800-DFFF) and another holds one
+    in U+E000-U+FFFF, so the sort key is the UTF-16BE encoding."""
     if isinstance(value, list):
         return "[" + ",".join(_jcs(v) for v in value) + "]"
     if isinstance(value, dict):
         return "{" + ",".join(
-            f"{json.dumps(k, ensure_ascii=False)}:{_jcs(value[k])}" for k in sorted(value)
+            f"{json.dumps(k, ensure_ascii=False)}:{_jcs(value[k])}"
+            for k in sorted(value, key=_utf16_sort_key)
         ) + "}"
     if isinstance(value, str):
         return json.dumps(value, ensure_ascii=False)

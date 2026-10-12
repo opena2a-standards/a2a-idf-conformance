@@ -2,17 +2,17 @@
 
 Canonical conformance suite for the **A2A-IDF** (Agent-to-Agent Identity Framework) specification proposed in [a2aproject/A2A#1496](https://github.com/a2aproject/A2A/pull/1496).
 
-Implementations of A2A-IDF run the fixtures in this repository to verify byte-match interoperability against the reference vectors. The suite is intentionally narrow: it covers the identity-framework layer (verification levels, attestation array shape, delegation chain envelopes, message-signing wire format) and composes with adjacent conformance suites for the wire signature layer ([#1829](https://github.com/a2aproject/A2A/issues/1829)), identity-claim envelope layer ([#1786](https://github.com/a2aproject/A2A/issues/1786) CTEF), and delegation/continuity layer ([#1575](https://github.com/a2aproject/A2A/issues/1575) APS).
+Implementations of A2A-IDF run the fixtures in this repository to verify byte-match interoperability against the reference vectors. The suite is intentionally narrow: it covers the identity-framework layer (verification levels, attestation array shape, message-signing wire format, delegation chain and bilateral receipt envelope shapes (unverified)) and composes with adjacent conformance suites for the wire signature layer ([#1829](https://github.com/a2aproject/A2A/issues/1829)), identity-claim envelope layer ([#1786](https://github.com/a2aproject/A2A/issues/1786) CTEF), and delegation/continuity layer ([#1575](https://github.com/a2aproject/A2A/issues/1575) APS).
 
 ## Status
 
 Byte-pinned and CI-enforced. Every fixture is pinned in [`MANIFEST.sha256`](./MANIFEST.sha256); generator-owned fixtures are reproducible from their documented inputs by [`scripts/generate-fixtures.mjs`](./scripts/generate-fixtures.mjs), and externally contributed snapshot fixtures (regenerated in their source implementation, noted per directory) are preserved and pinned by the same run. CI regenerates the set on every push and fails on any byte drift. New fixtures land incrementally in coordination with the A2A-IDF specification cycle ([#1496](https://github.com/a2aproject/A2A/pull/1496)) and the broader four-layer alignment.
 
-**Shipped (15 fixtures):**
+**Shipped (24 fixtures):**
 
-- [`fixtures/composition/aim-did-rfc9421/`](./fixtures/composition/aim-did-rfc9421/): three positive fixtures that byte-match [Envoys signature/v1 §14 Vectors 1-3](https://envoys.me/specs/signature/v1) with the `keyid` URL resolving to a W3C DID Document (Ed25519VerificationKey2020 + publicKeyMultibase) instead of the Envoys compact form — the core interop claim of A2A-IDF §6: dual-shape keyid resolution does not change the signature bytes. Plus three negative fixtures (tampered signature, substituted key, tampered body) that a conforming verifier MUST reject.
+- [`fixtures/composition/aim-did-rfc9421/`](./fixtures/composition/aim-did-rfc9421/): three positive fixtures that byte-match [Envoys signature/v1 §14 Vectors 1-3](https://envoys.me/specs/signature/v1) with the `keyid` URL resolving to a W3C DID Document (Ed25519VerificationKey2020 + publicKeyMultibase) instead of the Envoys compact form — the core interop claim of A2A-IDF §6: dual-shape keyid resolution does not change the signature bytes. Plus four negative fixtures (tampered signature, substituted key, tampered body, and a signature that verifies but is not the declared Envoys vector) that a conforming verifier MUST reject.
 - [`fixtures/composition/hippo-rfc9421/`](./fixtures/composition/hippo-rfc9421/): two snapshot fixtures contributed from [lawcontinue/hippo-auth](https://github.com/lawcontinue/hippo-auth), an independent Ed25519 + RFC 9421 implementation — §4.3 `tag=a2a-message` present and absent (absent ≡ `a2a-message` back-compat). Second-implementation evidence for the wire layer; signatures verified by both reference verifiers in this suite.
-- [`fixtures/levels/`](./fixtures/levels/): seven fixtures for A2A-IDF §1 verification levels — Level 0 SELF_ASSERTED, Level 1 DOMAIN_VERIFIED (pinned `_a2a-identity` DNS TXT record, key fingerprint binding), Level 2 ORGANIZATION_VERIFIED (registry attestation signed over the RFC 8785 JCS form), each with negative fixtures for the level's characteristic failure.
+- [`fixtures/levels/`](./fixtures/levels/): fifteen fixtures for A2A-IDF §1 verification levels — Level 0 SELF_ASSERTED, Level 1 DOMAIN_VERIFIED (pinned `_a2a-identity` DNS TXT record, key fingerprint binding), Level 2 ORGANIZATION_VERIFIED (registry attestation signed over the RFC 8785 JCS form), plus a Level 2 attestation whose property names require RFC 8785 §3.2.3 UTF-16 code-unit ordering (a key outside the BMP alongside one in U+E000-U+FFFF). Every one of the nine reject categories has a single-defect negative fixture, and two multi-defect fixtures pin the documented [check order](./fixtures/levels/README.md#check-order-cross-implementation-contract).
 - [`vectors/rfc8032-7-1.json`](./vectors/rfc8032-7-1.json) and [`vectors/rfc8032-7-1-test2.json`](./vectors/rfc8032-7-1-test2.json): RFC 8032 §7.1 Test 1 (agent) and Test 2 (registry issuer) Ed25519 keypairs in every encoded form the fixtures use.
 - [`scripts/verify.mjs`](./scripts/verify.mjs) and [`scripts/verify.py`](./scripts/verify.py): reference verifiers. Node stdlib `crypto` and Python `cryptography` only; no dependency on any A2A-IDF implementation library. A [parity gate](./scripts/parity/parity.py) asserts both implementations agree per fixture on gate, verdict, and reject category.
 - [`conformance.json`](./conformance.json): machine-readable profile mapping every tested requirement to its fixture and pinned outcome, derived from the fixtures themselves (CI fails if stale).
@@ -20,7 +20,7 @@ Byte-pinned and CI-enforced. Every fixture is pinned in [`MANIFEST.sha256`](./MA
 | Layer | Spec | Suite |
 |---|---|---|
 | Wire signature (per-message RFC 9421 + Ed25519) | [#1829](https://github.com/a2aproject/A2A/issues/1829) | [`envoys-rfc9421/`](https://github.com/aeoess/aps-conformance-suite) (external) |
-| **Identity framework (verification levels, attestations, delegation chains)** | **[#1496](https://github.com/a2aproject/A2A/pull/1496)** | **this repo** |
+| **Identity framework (verification levels, attestations, delegation chain envelope shapes (unverified))** | **[#1496](https://github.com/a2aproject/A2A/pull/1496)** | **this repo** |
 | Identity claims (CTEF) | [#1786](https://github.com/a2aproject/A2A/issues/1786) | external |
 | Delegation and continuity (APS) | [#1575](https://github.com/a2aproject/A2A/issues/1575) | external |
 
@@ -42,7 +42,7 @@ COSIGNERS.md       Second-party cosignature registry over MANIFEST.sha256
 The first composition fixture set is `fixtures/composition/aim-did-rfc9421/`, which exercises:
 
 - **L1:** [#1829](https://github.com/a2aproject/A2A/issues/1829) wire signature (Ed25519 over RFC 9421 components `("@method" "@path" "content-digest")` with `created` / `nonce` / `keyid`)
-- **L2:** [#1496](https://github.com/a2aproject/A2A/pull/1496) identity-framework wrap (A2A-IDF extension under `metadata`)
+- **L2:** [#1496](https://github.com/a2aproject/A2A/pull/1496) identity-framework layer: A2A-IDF §6 keyid resolution (DID Document), pinned in each fixture's `keyidResolution` member
 - **Key resolution:** W3C DID Document with `Ed25519VerificationKey2020` and `publicKeyMultibase`
 
 Three shapes per fixture, pinned to the RFC 8032 §7.1 keypair:
@@ -51,11 +51,15 @@ Three shapes per fixture, pinned to the RFC 8032 §7.1 keypair:
 2. Signature wrapped in a bilateral receipt envelope
 3. Signature wrapped in a 3-link delegation chain
 
+The reference verifiers check the wire signature in all three shapes. The envelopes are pinned as data only: the chain links and the receipt carry no signatures, and neither verifier reads the `envelope` block, so a chain whose scope widens or whose expiry increases is still accepted. Envelope verification is listed under `notCovered` in [`conformance.json`](./conformance.json).
+
 These shapes parallel the `envoys-rfc9421/` fixtures hosted in `aeoess/aps-conformance-suite` so that any verifier passing both suites can demonstrate cross-implementation byte-match.
 
 ## Reference implementation
 
-[**AIM**](https://github.com/opena2a-org) is the canonical reference implementation of A2A-IDF and ships Ed25519 message signing, JCS canonicalization, and W3C DID Document resolution today. AIM does not have a privileged position in the specification (any conforming implementation may serve as the basis for cross-validation), but its production deployment is the source of the test vectors in this suite.
+[**AIM**](https://github.com/opena2a-org) is the canonical reference implementation of A2A-IDF and ships Ed25519 message signing, JCS canonicalization, and W3C DID Document resolution today. AIM does not have a privileged position in the specification: any conforming implementation may serve as the basis for cross-validation.
+
+The test vectors in this suite are not taken from AIM or from any deployment. The keypairs in [`vectors/`](./vectors/) are the RFC 8032 §7.1 Test 1 and Test 2 seeds, and every generator-owned fixture is derived from those two seeds and the templates in [`scripts/generate-fixtures.mjs`](./scripts/generate-fixtures.mjs). The generator also asserts that the `aim-did-rfc9421/` composition signatures byte-match [Envoys signature/v1 §14 Vectors 1-3](https://envoys.me/specs/signature/v1). The two `hippo-rfc9421/` fixtures are snapshots produced by the [hippo-auth](https://github.com/lawcontinue/hippo-auth) signing path and pinned as contributed.
 
 ## Contributing
 

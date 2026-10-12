@@ -131,6 +131,43 @@
       "description": "Negative fixture: the bilateral-receipt request body modified after signing (url changed to https://evil.example/doc), with the Content-Digest header recomputed to match the new body — as an in-path attacker who cannot re-sign would do. The Signature header still carries the Envoys §14 Vector 2 signature over the ORIGINAL body's signature base. A conforming A2A-IDF verifier MUST reject: content-digest is a signed component, so the recomputed digest changes the signature base and Ed25519 verification fails."
     },
     {
+      "fixture": "fixtures/composition/aim-did-rfc9421/cross-suite-mismatch.json",
+      "name": "aim-did-rfc9421/cross-suite-mismatch",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape: application/did+json vs compact form)"
+        },
+        {
+          "id": "Envoys signature/v1",
+          "ref": "https://envoys.me/specs/signature/v1",
+          "version": "1.5.1",
+          "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+          "section": "§14 Vector 1 (GET request, no body)"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§3.2 Verifying a Signature"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (signing key and resolved public key)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "REJECT[CROSS_SUITE_MISMATCH]",
+      "description": "Negative fixture: the signature-alone request signed by a different valid Ed25519 key (RFC 8032 §7.1 Test 2), with the DID Document serving that same key, so the Signature header verifies against the resolved key. The fixture still declares byte-identity with Envoys §14 Vector 1, and its expected.signatureBase64 field carries the Vector 1 bytes instead of the bytes in the Signature header. A conforming verifier MUST reject: the cross-suite byte-match is a claim about the signature the verifier checked, so it compares the bytes parsed from the Signature header with the pinned vector, and those are the Test 2 signature. A verifier that compares expected.signatureBase64 instead accepts this fixture."
+    },
+    {
       "fixture": "fixtures/composition/aim-did-rfc9421/delegation-chain-3link.json",
       "name": "aim-did-rfc9421/delegation-chain-3link",
       "fixtureType": "composition",
@@ -377,6 +414,46 @@
       "description": "Level 0 (SELF_ASSERTED): an AgentCard declaring the agent-identity extension with identityLevel SELF_ASSERTED, a URN-format agentId, and an Ed25519 public key. No attestations are present and none are required — Level 0 makes no verifiable claim beyond well-formedness. A conforming verifier ACCEPTs the declaration shape while treating the identity as unverified (A2A-IDF Security Considerations: clients MUST NOT treat Level 0 agents as verified)."
     },
     {
+      "fixture": "fixtures/levels/level-1-agent-mismatch.json",
+      "name": "levels/level-1-agent-mismatch",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Agent Identity Verification Levels — Level 1 DNS Verification (agent name binding)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 (Ed25519 test keypairs)"
+        }
+      ],
+      "expected": "REJECT[AGENT_MISMATCH]",
+      "description": "Negative fixture: the DOMAIN_VERIFIED AgentCard with a DNS TXT record whose agent field names a different agent under the same domain (agent=payments-bot, while the agentId names financial-advisor). Record name, kid, and fingerprint all match. A conforming verifier MUST reject: the domain owner endorsed this key for a different agent name. Models one agent reusing a record the domain published for another of its agents."
+    },
+    {
+      "fixture": "fixtures/levels/level-1-domain-mismatch.json",
+      "name": "levels/level-1-domain-mismatch",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Agent Identity Verification Levels — Level 1 DNS Verification (agentId domain binding)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 (Ed25519 test keypairs)"
+        }
+      ],
+      "expected": "REJECT[DOMAIN_MISMATCH]",
+      "description": "Negative fixture: the DOMAIN_VERIFIED AgentCard served from provider.url https://example.com, with a matching domain attestation and a valid DNS TXT record at _a2a-identity.example.com, but an agentId that claims a different domain (urn:a2a:agent:example.org:financial-advisor:v2). The agentId is a well-formed URN and the record's agent name, kid, and fingerprint all match. A conforming verifier MUST reject: the domain that endorsed the key is not the domain the agent identifier claims. Models an agent asserting an identifier under a domain it does not control while presenting another domain's record."
+    },
+    {
       "fixture": "fixtures/levels/level-1-domain-verified.json",
       "name": "levels/level-1-domain-verified",
       "fixtureType": "level",
@@ -417,6 +494,46 @@
       "description": "Negative fixture: the DOMAIN_VERIFIED AgentCard with a DNS TXT record whose fp field is the fingerprint of a DIFFERENT Ed25519 key (RFC 8032 §7.1 Test 2). Record name, agent name, and kid all match. A conforming verifier MUST reject: the fingerprint binds the DNS record to the exact public key bytes, and a mismatch means the domain owner did not endorse this key. Models an agent presenting a key the domain never authorized."
     },
     {
+      "fixture": "fixtures/levels/level-1-kid-mismatch.json",
+      "name": "levels/level-1-kid-mismatch",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Agent Identity Verification Levels — Level 1 DNS Verification (kid binding)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 (Ed25519 test keypairs)"
+        }
+      ],
+      "expected": "REJECT[KID_MISMATCH]",
+      "description": "Negative fixture: the DOMAIN_VERIFIED AgentCard with a DNS TXT record whose kid field (agent-e5f6a7b8) differs from the declared publicKey.kid (agent-a1b2c3d4). Record name, agent name, and fingerprint all match. A conforming verifier MUST reject on the key ID binding before computing the fingerprint: the record endorses a key under a different identifier than the one the AgentCard declares. Models a card whose declared key ID drifted from the published record, for example after a key rotation that was not reflected in DNS."
+    },
+    {
+      "fixture": "fixtures/levels/level-1-multi-defect-domain-and-version.json",
+      "name": "levels/level-1-multi-defect-domain-and-version",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Agent Identity Verification Levels — Level 1 DNS Verification (check order: record name before record version)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 (Ed25519 test keypairs)"
+        }
+      ],
+      "expected": "REJECT[DOMAIN_MISMATCH]",
+      "description": "Check-order fixture with two defects: the DNS TXT record was published at _a2a-identity.example.net while provider.url is https://example.com (a DOMAIN_MISMATCH), and the record carries an unsupported version v=a2a9 (a SHAPE_INVALID). The record-name binding check precedes the record-version shape check in the contract order, so a conforming verifier MUST reject with DOMAIN_MISMATCH. A verifier that runs every shape check before any binding check reports SHAPE_INVALID and fails this fixture."
+    },
+    {
       "fixture": "fixtures/levels/level-2-attestation-expired.json",
       "name": "levels/level-2-attestation-expired",
       "fixtureType": "level",
@@ -440,6 +557,56 @@
       ],
       "expected": "REJECT[EXPIRED]",
       "description": "Negative fixture: an ORGANIZATION_VERIFIED attestation whose registry signature is VALID but whose validity window ended before the pinned validationTime (expiresAt 2025-02-17 < validationTime 2026-07-03). Every other field is well-formed and correctly bound. A conforming verifier MUST reject on the validity window alone. The fixture pins validationTime so the expiry decision is deterministic and never depends on the wall clock."
+    },
+    {
+      "fixture": "fixtures/levels/level-2-attestation-non-bmp-keys.json",
+      "name": "levels/level-2-attestation-non-bmp-keys",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Organization Verification (registry attestation)"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "§3.2.3 Sorting of Object Properties (UTF-16 code units)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (agent key), Test 2 (registry issuer key)"
+        }
+      ],
+      "expected": "ACCEPT",
+      "description": "Level 2 (ORGANIZATION_VERIFIED): the valid organization attestation with one additional member, rfc8785SortingExample, whose property names are the RFC 8785 §3.2.3 sorting example. That set contains a key outside the Basic Multilingual Plane (U+1F600) and a key in U+E000-U+FFFF (U+FB33), so ordering by UTF-16 code units (required) and by Unicode code points (not conforming) produce different signing inputs. The registry signed the UTF-16-ordered JCS form. A conforming verifier includes the unknown member in the signing input, sorts it per RFC 8785 §3.2.3, and ACCEPTs; a verifier that sorts by code point reconstructs different bytes and rejects with SIGNATURE_INVALID."
+    },
+    {
+      "fixture": "fixtures/levels/level-2-attestation-not-yet-valid.json",
+      "name": "levels/level-2-attestation-not-yet-valid",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Organization Verification (validity window)"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (attestation signing input)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (registry issuer key)"
+        }
+      ],
+      "expected": "REJECT[NOT_YET_VALID]",
+      "description": "Negative fixture: an ORGANIZATION_VERIFIED attestation whose registry signature is VALID but whose validity window starts after the pinned validationTime (verifiedAt 2026-09-01 > validationTime 2026-07-03). Every other field is well-formed and correctly bound. A conforming verifier MUST reject on the validity window alone. Models an attestation presented before its issuer-stated start time; the fixture pins validationTime so the decision never depends on the wall clock."
     },
     {
       "fixture": "fixtures/levels/level-2-attestation-tampered.json",
@@ -467,6 +634,31 @@
       "description": "Negative fixture: the ORGANIZATION_VERIFIED attestation with subject.organization altered AFTER signing (Example Corp → Wrong Corp). The signature was produced over the original JCS form, so it no longer verifies against the modified content. A conforming verifier MUST reject. Models post-issuance modification of a registry attestation."
     },
     {
+      "fixture": "fixtures/levels/level-2-multi-defect-subject-and-evidence.json",
+      "name": "levels/level-2-multi-defect-subject-and-evidence",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Organization Verification (check order: subject binding before evidence shape)"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (attestation signing input)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (registry issuer key)"
+        }
+      ],
+      "expected": "REJECT[SUBJECT_MISMATCH]",
+      "description": "Check-order fixture with two defects: the validly signed attestation's subject.kid (agent-e5f6a7b8) does not match the declared publicKey.kid (agent-a1b2c3d4), a SUBJECT_MISMATCH, and evidence omits validationTime, a SHAPE_INVALID. The subject binding check precedes the evidence shape check in the contract order, so a conforming verifier MUST reject with SUBJECT_MISMATCH. A verifier that runs every shape check before any binding check reports SHAPE_INVALID and fails this fixture."
+    },
+    {
       "fixture": "fixtures/levels/level-2-organization-verified.json",
       "name": "levels/level-2-organization-verified",
       "fixtureType": "level",
@@ -490,6 +682,31 @@
       ],
       "expected": "ACCEPT",
       "description": "Level 2 (ORGANIZATION_VERIFIED): an AgentCard carrying an organization attestation signed by a trust registry (Ed25519 over the RFC 8785 JCS canonicalization of the attestation object with the signature field excluded). A conforming verifier checks that the attestation subject binds to the declared agentId and kid, verifies the registry signature against the pinned issuer public key, and confirms the pinned validationTime falls inside [verifiedAt, expiresAt]. The issuer key is RFC 8032 §7.1 Test 2 (registry role); the agent key is Test 1."
+    },
+    {
+      "fixture": "fixtures/levels/level-2-subject-mismatch.json",
+      "name": "levels/level-2-subject-mismatch",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Organization Verification (attestation subject binding)"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (attestation signing input)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (registry issuer key)"
+        }
+      ],
+      "expected": "REJECT[SUBJECT_MISMATCH]",
+      "description": "Negative fixture: an ORGANIZATION_VERIFIED AgentCard carrying a registry attestation that is validly signed and inside its validity window, but whose subject.agentId names a different agent of the same organization (urn:a2a:agent:example.com:payments-bot:v1). subject.kid matches the declared key ID. A conforming verifier MUST reject: the attestation does not bind to the declared agentId. Models replay of an attestation the registry issued to another agent."
     }
   ]
 }

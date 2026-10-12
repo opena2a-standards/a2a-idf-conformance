@@ -110,9 +110,9 @@ Use when the `keyid` URL would return a W3C DID Document at `application/did+jso
 | `signatureBase` | yes | The exact bytes the signer signed. Format per RFC 9421 §2.5: quoted component identifiers, parameters only in `@signature-params`. See below for the precise format. |
 | `signatureInput` | yes | RFC 9421 `Signature-Input` header value for label `sig1`. |
 | `signature` | yes | RFC 9421 `Signature` header value: `sig1=:<base64>:`. |
-| `signatureBase64` | yes | The base64 signature, naked (no `sig1=:` wrapping). Used by `crossSuiteEquivalence` byte-match checks. |
+| `signatureBase64` | yes | The base64 signature, naked (no `sig1=:` wrapping). Informational: verifiers MUST NOT use it for the `crossSuiteEquivalence` byte-match, which compares the bytes parsed from `signature`. The `cross-suite-mismatch` negative fixture sets it to a value that differs from `signature` to catch a verifier that does. |
 | `verifyResult` | no | `ACCEPT` (default) or `REJECT`. Use `REJECT` for negative-path fixtures asserting that a particular malformation must be rejected. |
-| `rejectCategory` | REJECT fixtures | Machine-readable reject category the verifier must observe. At the wire layer the only modeled category is `SIGNATURE_INVALID` — tampered signature bytes, a substituted key, and a tampered body (content-digest is a signed component) all surface as an Ed25519 verification failure against the resolved key. A negative fixture must be valid at every stage before that check (digest, base, Signature-Input, key extraction), so a verifier that rejects for the wrong reason fails the fixture. |
+| `rejectCategory` | REJECT fixtures | Machine-readable reject category the verifier must observe. Two categories are modeled. `SIGNATURE_INVALID`: tampered signature bytes, a substituted key, and a tampered body (content-digest is a signed component) all surface as an Ed25519 verification failure against the resolved key. `CROSS_SUITE_MISMATCH`: the signature verifies, but the fixture declares `crossSuiteEquivalence.envoys.byteIdentical: true` and the verified signature bytes are not the pinned vector (see below). A negative fixture must be valid at every stage before that check (digest, base, Signature-Input, key extraction), so a verifier that rejects for the wrong reason fails the fixture. |
 
 ### Exact `signatureBase` format
 
@@ -140,7 +140,7 @@ Declare a byte-match relationship with another conformance suite's published vec
 }
 ```
 
-When `byteIdentical: true`, the verifier asserts that `expected.signatureBase64` matches `expectedSignatureBase64` exactly. This is the core interop claim of A2A-IDF §6: dual-shape `keyid` resolution does not change the signed bytes.
+When `byteIdentical: true` and the signature verifies, the verifier base64-encodes the signature bytes it parsed from `expected.signature` (the bytes it just verified) and asserts that they match `expectedSignatureBase64` exactly; otherwise it rejects with `CROSS_SUITE_MISMATCH`. It never reads `expected.signatureBase64` for this check. This is the core interop claim of A2A-IDF §6: dual-shape `keyid` resolution does not change the signed bytes.
 
 ## Reproducibility checklist
 
