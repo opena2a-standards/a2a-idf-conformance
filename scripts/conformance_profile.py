@@ -190,8 +190,10 @@ REQUIRED_FIXTURE_FIELDS = {
 
 
 class FixtureError(Exception):
-    """A fixture is not valid JSON, lacks a field the profile is derived from,
-    or has one of the wrong type; one line per fixture."""
+    """A fixture does not decode or parse (a ValueError; the json module
+    accepts NaN and Infinity, and the RecursionError it raises on very deep
+    nesting is not caught), is not a JSON object, lacks a field the profile
+    is derived from, or has one of the wrong type; one line per fixture."""
 
 
 def fixture_field_error(fx: object) -> str | None:
