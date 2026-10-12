@@ -735,12 +735,16 @@ function isRealDirectory(path) {
   }
 }
 
-// A `*.json` path that is a file, or one whose status cannot be read at all (a
-// dangling symlink, a symlink loop), which is then reported as ERROR.
+// A `*.json` path that is not a directory once symlinks are followed, so a
+// symlink to a directory is not a fixture, or one whose status cannot be read
+// at all (a dangling symlink, a symlink loop), which is then reported as ERROR.
+// A path of another kind is listed whatever it is, so one that cannot be read
+// as a file (a socket) is reported as ERROR too, not passed over. A FIFO is
+// read as a file is: the read waits until a writer opens it.
 function isFixtureFile(path) {
   if (!path.endsWith(".json")) return false;
   try {
-    return statSync(path).isFile();
+    return !statSync(path).isDirectory();
   } catch {
     return true;
   }

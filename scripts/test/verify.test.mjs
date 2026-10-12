@@ -440,6 +440,29 @@ test("a symlink to a directory is not followed during the walk by either verifie
   }
 });
 
+// A symlink to a directory is the only `*.json` entry the walk of verify.mjs
+// passes over. An entry of another kind that cannot be read as a file (here a
+// Unix socket) is listed and reported as ERROR, not skipped by a run that then
+// exits 0. verify.py passes over a socket, so it is not run here. The socket
+// is bound by a relative name from inside the directory, because a socket
+// address holds about 100 bytes.
+test("verify.mjs reports a socket named *.json met during the walk as ERROR", { skip: process.platform === "win32" }, (t) => {
+  const { dir } = scratchFixtureDir(t);
+  const bound = spawnSync(
+    VERIFIERS.python[0],
+    ["-c", "import socket; socket.socket(socket.AF_UNIX).bind('socket.json')"],
+    { cwd: dir, encoding: "utf8" },
+  );
+  assert.equal(bound.status, 0, bound.stderr);
+  assertErrorEntries(
+    "node",
+    runVerifier(VERIFIERS.node, dir),
+    dir,
+    [["socket.json", /\bopen\b/]],
+    "summary: 1 pass, 1 fail (2 fixtures)",
+  );
+});
+
 test(
   "a directory that cannot be listed is reported as ERROR by both verifiers",
   { skip: process.platform === "win32" || process.getuid?.() === 0 },
