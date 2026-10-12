@@ -463,8 +463,8 @@ _HOST_LABEL_SEPARATORS = re.compile(
 # This is the set the WHATWG URL parser of Node 26 removes from a domain; a
 # parser built on older UTS #46 data rejects some of the later additions instead.
 _UTS46_IGNORED = re.compile(
-    "[­͏ᅟᅠ឴឵᠋-᠏​⁠-⁤"
-    "⁪-⁯ㅤ︀-️﻿ﾠ"
+    "[\u00ad\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b\u2060-\u2064"
+    "\u206a-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0"
     "\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0100-\U000e01ef]"
 )
 

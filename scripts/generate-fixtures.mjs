@@ -1191,7 +1191,7 @@ function level1ProviderUrlIgnoredCodePointFixture() {
       "Level 1 (DOMAIN_VERIFIED) with a soft hyphen (U+00AD) in the provider host: provider.url is https://example.com with that code point between exam and ple, written as a JSON Unicode escape in this file. UTS #46 maps the soft hyphen to nothing, so the provider domain is example.com, which every binding names. A conforming verifier drops the ignored code point when it converts the domain to ASCII, as the WHATWG URL parser does, and ACCEPTs. A verifier that Punycode-encodes the label with the soft hyphen in it derives xn--example-oka.com and reports a spurious DOMAIN_MISMATCH.",
     specDetail: "ignored code point in the provider host",
     whatwgSection: "domain to ASCII (UTS #46 ignored code points)",
-    providerUrl: "https://exam­ple.com",
+    providerUrl: "https://exam\u00adple.com",
     providerDomain: "example.com",
     expected: { verifyResult: "ACCEPT" },
   });
@@ -1601,7 +1601,7 @@ const FILES = {
 // A soft hyphen is invisible in most editors and diffs, so a fixture that
 // carries one writes it as a JSON escape. The parsed value is the same.
 function serialize(content) {
-  return JSON.stringify(content, null, 2).replaceAll("­", "\\u00ad") + "\n";
+  return JSON.stringify(content, null, 2).replaceAll("\u00ad", "\\u00ad") + "\n";
 }
 
 function assertEqual(actual, expected, what) {
