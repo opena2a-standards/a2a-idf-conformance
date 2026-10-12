@@ -11,8 +11,8 @@
     "description": { "type": "string" },
     "spec": { "type": "array" },
     "level": { "type": "integer", "enum": [0, 1, 2] },
-    "agentCard": { "type": "object" },
-    "evidence": { "type": "object" },
+    "agentCard": {},
+    "evidence": {},
     "expected": {
       "type": "object",
       "properties": {

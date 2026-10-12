@@ -75,6 +75,13 @@ def provider_url(url: Any, domain: str = "example.com") -> dict:
     return fixture
 
 
+def domain_verified(**members: Any) -> dict:
+    """The valid Level 1 fixture with top-level members replaced."""
+    fixture = json.loads((LEVELS_DIR / "level-1-domain-verified.json").read_text())
+    fixture.update(members)
+    return fixture
+
+
 def attestation_domain(domain: str) -> dict:
     fixture = provider_url("https://example.com")
     identity_params(fixture)["attestations"][0]["domain"] = domain
@@ -170,6 +177,11 @@ CASES = [
         nested="[" * DEPTH + "]" * DEPTH,
         expected={"verifyResult": NESTED},
     ),
+    # agentCard and evidence are the material under evaluation, so a value that
+    # is not a JSON object is a shape reject, not a schema failure.
+    Case("agent-card-null", domain_verified(agentCard=None), "REJECT[SHAPE_INVALID]"),
+    Case("agent-card-array", domain_verified(agentCard=[]), "REJECT[SHAPE_INVALID]"),
+    Case("evidence-array", domain_verified(evidence=[]), "REJECT[SHAPE_INVALID]"),
     # A reject reason that quotes a lone surrogate is still printed as FAIL, not ERROR.
     Case("lone-surrogate-in-reason", attestation_domain("example.com\udc00"), "REJECT[DOMAIN_MISMATCH]", pinned="ACCEPT"),
 ]
