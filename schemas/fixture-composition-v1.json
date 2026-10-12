@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a2a-idf.opena2a.org/schemas/fixture-composition-v1.json",
+  "title": "A2A-IDF composition fixture",
+  "description": "Fixtures under fixtures/composition/. Prose reference: fixtures/composition/SCHEMA.md.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "name",
+    "description",
+    "spec",
+    "input",
+    "signatureParams",
+    "keyidResolution",
+    "expected"
+  ],
+  "properties": {
+    "$schema": { "const": "https://a2a-idf.opena2a.org/schemas/fixture-composition-v1.json" },
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "spec": { "type": "array" },
+    "input": {
+      "type": "object",
+      "required": ["method", "path", "body"],
+      "properties": {
+        "method": { "type": "string" },
+        "path": { "type": "string" },
+        "body": { "type": "string" },
+        "bodyEncoding": { "enum": ["utf-8", "base64"], "default": "utf-8" }
+      }
+    },
+    "signatureParams": {
+      "type": "object",
+      "required": ["components", "keyid", "created", "nonce"],
+      "properties": {
+        "components": { "type": "array" },
+        "keyid": { "type": "string" },
+        "created": { "type": "integer" },
+        "nonce": { "type": "string" },
+        "tag": { "type": ["string", "null"] }
+      }
+    },
+    "keyidResolution": {
+      "type": "object",
+      "required": ["shape"],
+      "properties": {
+        "shape": { "enum": ["compact", "did-json"] },
+        "publicKeyPem": { "type": "string" },
+        "contentType": { "type": "string" },
+        "document": { "type": "object" }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["shape"], "properties": { "shape": { "const": "compact" } } },
+          "then": { "required": ["publicKeyPem"] }
+        },
+        {
+          "if": { "required": ["shape"], "properties": { "shape": { "const": "did-json" } } },
+          "then": { "required": ["document"] }
+        }
+      ]
+    },
+    "expected": {
+      "type": "object",
+      "required": ["contentDigest", "signatureBase", "signatureInput", "signature", "signatureBase64"],
+      "properties": {
+        "contentDigest": { "type": "string" },
+        "signatureBase": { "type": "string" },
+        "signatureInput": { "type": "string" },
+        "signature": { "type": "string" },
+        "signatureBase64": { "type": "string" },
+        "verifyResult": { "enum": ["ACCEPT", "REJECT"], "default": "ACCEPT" },
+        "rejectCategory": { "enum": ["TAG_MISMATCH", "SIGNATURE_INVALID", "CROSS_SUITE_MISMATCH"] }
+      },
+      "if": { "required": ["verifyResult"], "properties": { "verifyResult": { "const": "REJECT" } } },
+      "then": { "required": ["rejectCategory"] }
+    },
+    "crossSuiteEquivalence": {
+      "type": "object",
+      "properties": {
+        "envoys": { "type": "object" }
+      }
+    }
+  }
+}

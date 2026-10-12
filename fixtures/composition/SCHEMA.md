@@ -1,6 +1,6 @@
 # Composition fixture schema
 
-This document describes the JSON schema that every fixture under `fixtures/composition/` must conform to. Both reference verifiers (`scripts/verify.mjs`, `scripts/verify.py`) read this shape directly; a fixture that doesn't match this schema cannot be verified.
+This document describes the JSON schema that every fixture under `fixtures/composition/` must conform to. The machine-readable form is [`schemas/fixture-composition-v1.json`](../../schemas/fixture-composition-v1.json), whose `$id` is the `$schema` URL each fixture declares. Both reference verifiers (`scripts/verify.mjs`, `scripts/verify.py`) check every fixture against it before any other stage: a fixture missing a required field, or carrying a value of the wrong type or outside an allowed set, fails at stage `schema`.
 
 The canonical reference fixture is [`aim-did-rfc9421/signature-alone.json`](./aim-did-rfc9421/signature-alone.json).
 

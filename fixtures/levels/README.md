@@ -47,6 +47,16 @@ the trust-registry issuer key is Test 2 ([`../../vectors/rfc8032-7-1-test2.json`
 
 ## Fixture shape
 
+The machine-readable form is
+[`schemas/fixture-level-v1.json`](../../schemas/fixture-level-v1.json), whose
+`$id` is the `$schema` URL each fixture declares. `$schema`, `name`,
+`description`, `spec`, `level`, `agentCard` and `expected` are required, and
+`expected.rejectCategory` is required when `verifyResult` is `REJECT`. Both
+reference verifiers check this before evaluating the identity declaration and
+fail a non-conforming fixture at stage `schema`. The schema does not constrain
+the contents of `agentCard` or `evidence`: those are the material under
+evaluation, and a malformed declaration is a `SHAPE_INVALID` verdict.
+
 ```jsonc
 {
   "$schema": "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",

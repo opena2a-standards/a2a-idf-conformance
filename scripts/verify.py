@@ -12,6 +12,8 @@ Handles both fixture families:
     + A2A-IDF §6 dual-shape keyid resolution
   - level fixtures (fixtures/levels/**): A2A-IDF §1 verification levels
     (SELF_ASSERTED / DOMAIN_VERIFIED / ORGANIZATION_VERIFIED)
+Every fixture is first checked against its family's schema in ../schemas/;
+a fixture missing a required field fails at stage `schema`.
 
 Usage:  python3 verify.py <fixture.json | directory> [...]
 Directories are walked recursively for *.json fixtures.
@@ -243,26 +245,11 @@ def gate_verdict(
 # --- composition fixtures (RFC 9421 wire layer + §6 keyid resolution) -------------
 
 
-def _composition_schema_error(fixture: dict[str, Any]) -> str | None:
-    """The optional crossSuiteEquivalence block, when present, must be a JSON
-    object, and so must its `envoys` member. Same rule and wording as
-    verify.mjs, so a malformed block is neither skipped nor raised on."""
-    if "crossSuiteEquivalence" not in fixture:
-        return None
-    cse = fixture["crossSuiteEquivalence"]
-    if not isinstance(cse, dict):
-        return "crossSuiteEquivalence is present but is not a JSON object"
-    if "envoys" in cse and not isinstance(cse["envoys"], dict):
-        return "crossSuiteEquivalence.envoys is present but is not a JSON object"
-    return None
-
-
 def verify_composition_fixture(fixture: dict[str, Any]) -> tuple[bool, str | None, list[str]]:
+    """The fixture has passed the schema stage (verify_fixture), so its required
+    blocks are present and the optional crossSuiteEquivalence block and its
+    `envoys` member, when present, are JSON objects."""
     expected = fixture.get("expected", {})
-
-    schema_error = _composition_schema_error(fixture)
-    if schema_error is not None:
-        return False, None, ["stage:  schema", f"reason: {schema_error}"]
 
     # Recompute Content-Digest. Algorithm is taken from the prefix of
     # expected.contentDigest (RFC 9530).
@@ -859,12 +846,114 @@ def verify_level_fixture(fixture: dict[str, Any]) -> tuple[bool, str | None, lis
     return ok, observed_str, lines
 
 
+# --- fixture schema (schemas/*.json) ----------------------------------------------
+
+# The committed JSON Schemas are the required-field contract for each fixture
+# family. This checker implements exactly the keywords those schemas use:
+# type, const, enum, required, properties, allOf, and if/then.
+SCHEMA_DIR = Path(__file__).resolve().parent.parent / "schemas"
+SCHEMA_FILES = {
+    "composition": "fixture-composition-v1.json",
+    "level": "fixture-level-v1.json",
+}
+_schema_cache: dict[str, dict[str, Any]] = {}
+
+
+def load_schemas() -> dict[str, dict[str, Any]]:
+    if not _schema_cache:
+        for family, name in SCHEMA_FILES.items():
+            _schema_cache[family] = json.loads((SCHEMA_DIR / name).read_text(encoding="utf-8"))
+    return _schema_cache
+
+
+def fixture_family(fixture: Any, schemas: dict[str, dict[str, Any]]) -> str:
+    """The fixture's $schema selects its family; without a known $schema, a
+    fixture carrying an agentCard is a level fixture and anything else is
+    composition."""
+    declared = fixture.get("$schema") if isinstance(fixture, dict) else None
+    for family, schema in schemas.items():
+        if declared == schema["$id"]:
+            return family
+    return "level" if isinstance(fixture, dict) and "agentCard" in fixture else "composition"
+
+
+def _json_type(v: Any) -> str:
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "boolean"
+    if isinstance(v, int):
+        return "integer"
+    if isinstance(v, float):
+        return "integer" if v.is_integer() else "number"
+    if isinstance(v, str):
+        return "string"
+    if isinstance(v, list):
+        return "array"
+    return "object"
+
+
+def _json_text(v: Any) -> str:
+    return json.dumps(v, ensure_ascii=False, separators=(",", ":"))
+
+
+def _field_path(path: str, key: str) -> str:
+    return key if path == "" else f"{path}.{key}"
+
+
+def _same_value(a: Any, b: Any) -> bool:
+    # JSON equality: true is not 1, as in JavaScript's ===.
+    return _json_type(a) == _json_type(b) and a == b
+
+
+def schema_violation(schema: dict[str, Any], value: Any, path: str) -> str | None:
+    """Returns the first violation as a message, or None when the value conforms.
+    `type` is a type name or a list of them."""
+    where = path or "fixture"
+    vtype = _json_type(value)
+    stype = schema.get("type")
+    if stype is not None:
+        types = stype if isinstance(stype, list) else [stype]
+        if not any(t == vtype or (t == "number" and vtype == "integer") for t in types):
+            names = " or ".join(types)
+            if path == "":
+                return f"fixture is not a JSON {names}"
+            return f"{path} is present but is not a JSON {names}"
+    if "const" in schema and not _same_value(value, schema["const"]):
+        return f"{where}: expected {_json_text(schema['const'])}, got {_json_text(value)}"
+    if "enum" in schema and not any(_same_value(value, v) for v in schema["enum"]):
+        allowed = ", ".join(_json_text(v) for v in schema["enum"])
+        return f"{where}: {_json_text(value)} is not one of {allowed}"
+    if vtype == "object":
+        for key in schema.get("required", []):
+            if key not in value:
+                return f"missing required field {_field_path(path, key)}"
+        for key, sub in schema.get("properties", {}).items():
+            if key not in value:
+                continue
+            violation = schema_violation(sub, value[key], _field_path(path, key))
+            if violation is not None:
+                return violation
+    for sub in schema.get("allOf", []):
+        violation = schema_violation(sub, value, path)
+        if violation is not None:
+            return violation
+    if "if" in schema and "then" in schema and schema_violation(schema["if"], value, path) is None:
+        return schema_violation(schema["then"], value, path)
+    return None
+
+
 # --- driver -----------------------------------------------------------------------
 
 
 def verify_fixture(path: Path) -> tuple[bool, str | None, list[str]]:
     fixture = json.loads(path.read_text(encoding="utf-8"))
-    if "agentCard" in fixture:
+    schemas = load_schemas()
+    family = fixture_family(fixture, schemas)
+    violation = schema_violation(schemas[family], fixture, "")
+    if violation is not None:
+        return False, None, ["stage:  schema", f"reason: {violation}"]
+    if family == "level":
         return verify_level_fixture(fixture)
     return verify_composition_fixture(fixture)
 
