@@ -1,6 +1,6 @@
 # Composition fixtures
 
-Multi-layer fixtures that exercise A2A-IDF in combination with adjacent layers (wire signature, identity claims, delegation/continuity).
+Multi-layer fixtures that exercise A2A-IDF in combination with adjacent layers: the wire signature layer in every fixture, and delegation/continuity envelope shapes (pinned as data, not verified) in two. The identity-claim layer ([#1786](https://github.com/a2aproject/A2A/issues/1786)) is not composed yet; see [Planned fixtures](#planned-fixtures).
 
 ## Shipped fixtures
 
@@ -23,6 +23,10 @@ Plus four negative fixtures a conforming verifier MUST reject: `signature-tamper
 ### `envoys-rfc9421-cross-validate/` (planned)
 
 Direct cross-validation against [`envoys-rfc9421/`](https://github.com/aeoess/aps-conformance-suite) fixtures. A2A-IDF verifiers MUST produce the same accept/reject decisions on these inputs as the Envoys reference verifier.
+
+### Identity-claim envelope (not yet composed, blocked on upstream)
+
+No fixture in this directory combines a [#1786](https://github.com/a2aproject/A2A/issues/1786) identity-claim envelope with A2A-IDF, and neither reference verifier reads one. The fixture shape depends on the upstream envelope decision, so there is nothing byte-stable to pin yet. Revisit when the envelope is decided.
 
 ### `erc-8004-bridge/` (proposed, blocked on upstream)
 

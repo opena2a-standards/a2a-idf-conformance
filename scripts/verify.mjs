@@ -295,6 +295,18 @@ function verifyCompositionFixture(fixture, path) {
     };
   }
 
+  // A byte-identity claim is only checkable against a pinned value, so a claim
+  // without one is a malformed fixture, never a skipped comparison.
+  const cse = fixture.crossSuiteEquivalence?.envoys;
+  if (cse?.byteIdentical === true && !isNonEmptyString(cse.expectedSignatureBase64)) {
+    return {
+      path,
+      ok: false,
+      stage: "cross-suite-equivalence",
+      reason: "crossSuiteEquivalence.envoys.byteIdentical is true but expectedSignatureBase64 is missing or empty",
+    };
+  }
+
   // Verify Ed25519 signature.
   const sigBytes = parseSignatureHeader(expected.signature);
   if (sigBytes === null) {
@@ -311,10 +323,9 @@ function verifyCompositionFixture(fixture, path) {
   // expected.signatureBase64, which a fixture can set independently of the
   // Signature header.
   let observed = { verdict: "ACCEPT" };
-  const cse = fixture.crossSuiteEquivalence?.envoys;
   if (!ok) {
     observed = { verdict: "REJECT", category: "SIGNATURE_INVALID" };
-  } else if (cse?.byteIdentical === true && cse.expectedSignatureBase64) {
+  } else if (cse?.byteIdentical === true) {
     if (sigBytes.toString("base64") !== cse.expectedSignatureBase64) {
       observed = {
         verdict: "REJECT",
@@ -398,8 +409,9 @@ function reject(category, reason) {
 }
 
 // Evaluate the identity declaration. Returns {verdict, category, reason}.
-// The check order is part of the cross-implementation contract: shape first,
-// then per-level binding checks, then cryptography, then validity window.
+// The check order is part of the cross-implementation contract. It is the
+// numbered list under "Check order" in fixtures/levels/README.md, which is not
+// shape-first: some shape checks run between binding checks.
 function evaluateIdentity(fixture) {
   const card = fixture.agentCard;
   const extensions = card?.capabilities?.extensions;
