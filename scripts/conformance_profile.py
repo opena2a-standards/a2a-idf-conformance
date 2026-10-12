@@ -190,23 +190,25 @@ REQUIRED_FIXTURE_FIELDS = {
 
 
 class FixtureError(Exception):
-    """A fixture lacks a field the profile is derived from, or has one of the
-    wrong type; one line per fixture."""
+    """A fixture is not valid JSON, lacks a field the profile is derived from,
+    or has one of the wrong type; one line per fixture."""
 
 
 def fixture_field_error(fx: object) -> str | None:
-    """The one-line reason a fixture cannot be profiled, or None."""
+    """The one-line reason a fixture cannot be profiled, or None: every missing
+    field and every field of the wrong type, so one run names them all."""
     if not isinstance(fx, dict):
         return "is not a JSON object"
     missing = [f'"{field}"' for field in REQUIRED_FIXTURE_FIELDS if field not in fx]
+    problems = []
     if missing:
-        return f"missing required field{'s' if len(missing) > 1 else ''} " + ", ".join(missing)
-    wrong = [
+        problems.append(f"missing required field{'s' if len(missing) > 1 else ''} " + ", ".join(missing))
+    problems += [
         f'required field "{field}" is not {label}'
         for field, (kind, label) in REQUIRED_FIXTURE_FIELDS.items()
-        if not isinstance(fx[field], kind)
+        if field in fx and not isinstance(fx[field], kind)
     ]
-    return "; ".join(wrong) or None
+    return "; ".join(problems) or None
 
 
 def build() -> dict:
@@ -215,7 +217,12 @@ def build() -> dict:
     fixtures_root = REPO_ROOT / "fixtures"
     for path in sorted(fixtures_root.rglob("*.json")):
         rel = path.relative_to(fixtures_root)
-        fx = json.loads(path.read_text())
+        try:
+            fx = json.loads(path.read_text())
+        except ValueError as err:
+            # JSONDecodeError, or UnicodeDecodeError for bytes that are not text.
+            errors.append(f"fixtures/{rel.as_posix()}: is not valid JSON ({err})")
+            continue
         error = fixture_field_error(fx)
         if error is not None:
             errors.append(f"fixtures/{rel.as_posix()}: {error}")

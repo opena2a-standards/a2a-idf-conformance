@@ -10,12 +10,14 @@
 //     by any `cd <dir>` or `cd -- <dir>` earlier on the same line. In a block
 //     labelled as shell (`bash`, `sh`, ...), a `cd` inside a subshell,
 //     `(cd <dir> && node ...)`, moves only the commands up to the closing
-//     parenthesis; other blocks do not split at parentheses. Text from an
-//     unquoted `#` that starts a word is a comment and is not read;
+//     parenthesis; other blocks do not split at parentheses, so there a `cd`
+//     that opens a subshell is one this check cannot resolve;
 //   - the files a `cosign sign-blob` command writes, in a fenced code block that tells
 //     the reader to commit them under `.sigstore/<org>/`, which must not be ignored by
 //     git at that location (`<placeholder>` segments are checked as `example-org`).
-// URLs with a scheme and same-page `#anchor` links are skipped.
+// In a code block, text from an unquoted `#` that starts a word is a comment:
+// the commands and cosign output flags in it are not read, the `.sigstore/<org>/`
+// directory is. URLs with a scheme and same-page `#anchor` links are skipped.
 //
 // Exit codes: 0 = every path resolves, 1 = at least one does not, or the check
 // could not run (one `error:` line names the cause).
@@ -41,9 +43,14 @@ const SHELL_COMMAND_BOUNDARY = /(&&|[;|()])/;
 const SHELL_LANGUAGES = new Set(["bash", "sh", "zsh", "ksh", "shell", "console", "shell-session", "sh-session"]);
 const SCRIPT_COMMAND = /^(?:\$\s+)?(?:node|python3?)\s+(\S+\.(?:mjs|cjs|js|py))(?:\s|$)/;
 const CD_COMMAND = /^(?:\$\s+)?cd(?:\s+(.*))?$/s;
+// A `cd` that opens a subshell, `(cd <dir>` or `$(cd <dir>`, in a block that
+// does not split at parentheses.
+const SUBSHELL_CD = /(?:^|[\s=$])\(\s*cd(?:\s|$)/;
 // A redirection word: `2>/dev/null`, `>>log`, `&>out`, `2>&1`, `<in`. With
 // nothing after the operator, the next word is its target.
 const REDIRECT = /^(?:\d+|&)?(?:<<<|<<-?|<>|<&|>&|>>|>\||<|>)(.*)$/;
+// A `<name>` placeholder the reader fills in, as in `cd <your-clone>`.
+const PLACEHOLDER = /<[A-Za-z][^<>\s]*>/;
 // Bounds the work on one line, which otherwise grows with the square of its
 // length: a `cd` past the 32nd on a line, or one that leads to a path longer
 // than 4096 characters (PATH_MAX on Linux), is not followed.
@@ -93,11 +100,13 @@ function fillPlaceholders(path) {
   }
 }
 
-// Joins `\`-continued shell lines so each entry is one whole command.
+// Joins `\`-continued shell lines so each entry is one whole command, without
+// the comment of any line.
 function commands(block) {
   const out = [];
   let current = null;
-  for (const { text, where } of block) {
+  for (const { text: line, where } of block) {
+    const text = stripComment(line);
     if (current === null) current = { text: "", where };
     const continued = /\\\s*$/.test(text);
     current.text += `${continued ? text.replace(/\\\s*$/, "") : text} `;
@@ -181,6 +190,9 @@ function describeBase(base) {
 // begins. One pass over the line.
 function stripComment(line) {
   let quote = null;
+  // A word starts at the start of the line and after an unquoted, unescaped
+  // blank or operator character. An escaped one, as in `\ #`, is part of a word.
+  let wordStart = true;
   for (let i = 0; i < line.length; i++) {
     const c = line[i];
     if (quote !== null) {
@@ -190,9 +202,13 @@ function stripComment(line) {
       i++;
     } else if (c === "'" || c === '"') {
       quote = c;
-    } else if (c === "#" && (i === 0 || /[\s;&|()<>]/.test(line[i - 1]))) {
+    } else if (c === "#" && wordStart) {
       return line.slice(0, i);
+    } else {
+      wordStart = /[\s;&|()<>]/.test(c);
+      continue;
     }
+    wordStart = false;
   }
   return line;
 }
@@ -200,15 +216,19 @@ function stripComment(line) {
 // The directory a `cd` moves to (`cd <dir>`, `cd -- <dir>`, with any
 // redirections such as `2>/dev/null` set aside), or null when this check cannot
 // resolve it: no operand or more than one, an option other than a leading `--`,
-// or a target that needs the shell (`cd`, `cd ~`, `cd "$DIR"`, `cd -`,
-// `cd -P <dir>`).
+// a `<placeholder>`, or a target that needs the shell (`cd`, `cd ~`,
+// `cd "$DIR"`, `cd -`, `cd -P <dir>`).
 function cdTarget(args = "") {
   const words = args.split(/\s+/).filter(Boolean);
   const operands = [];
   for (let i = 0; i < words.length; i++) {
-    const redirect = words[i].match(REDIRECT);
-    if (redirect === null) operands.push(words[i]);
-    else if (redirect[1] === "" && ++i === words.length) return null;
+    const word = words[i];
+    if (PLACEHOLDER.test(word)) return null;
+    // A redirection is a word of its own (`2>/dev/null`) or follows the operand
+    // without a space (`fixtures>/dev/null`).
+    const at = REDIRECT.test(word) ? 0 : word.search(/&?[<>]/);
+    if (at !== 0) operands.push(at < 0 ? word : word.slice(0, at));
+    if (at >= 0 && word.slice(at).match(REDIRECT)[1] === "" && ++i === words.length) return null;
   }
   if (operands[0] === "--") operands.shift();
   return operands.length === 1 && !/^[~-]|[$"'`]/.test(operands[0]) ? operands[0] : null;
@@ -239,7 +259,7 @@ function checkFile(relPath) {
           fence = null;
           const result = checkCosignOutputs(block);
           checked += result.checked;
-          broken.push(...result.broken);
+          for (const entry of result.broken) broken.push(entry);
         }
         return;
       }
@@ -261,12 +281,15 @@ function checkFile(relPath) {
             continue;
           }
           const part = piece.trim();
-          const cd = part.match(CD_COMMAND);
-          if (cd) {
+          // Outside a shell block the parentheses stay in the piece, so where a
+          // subshell ends is not followed: a `cd` that opens one cannot be resolved.
+          const subshellCd = !shell && SUBSHELL_CD.test(part);
+          const cd = subshellCd ? null : part.match(CD_COMMAND);
+          if (cd || subshellCd) {
             // A target this check cannot resolve, or one past the bounds, ends
             // the checks for the rest of the line, or of the subshell it is in,
             // instead of guessing.
-            const target = ++cdSteps > MAX_CD_STEPS ? null : cdTarget(cd[1]);
+            const target = ++cdSteps > MAX_CD_STEPS || subshellCd ? null : cdTarget(cd[1]);
             bases =
               target === null || bases.length === 0
                 ? []
@@ -312,9 +335,12 @@ const broken = [];
 for (const file of trackedMarkdown()) {
   const result = checkFile(file);
   checked += result.checked;
-  broken.push(...result.broken);
+  // One push per entry: spreading a long list into one call overflows the stack.
+  for (const entry of result.broken) broken.push(entry);
 }
 
 for (const line of broken) console.log(`FAIL  ${line}`);
 console.log(`summary: ${checked} paths checked, ${broken.length} broken`);
-process.exit(broken.length === 0 ? 0 : 1);
+// Not process.exit(), which can end the process before output written to a pipe
+// is flushed.
+process.exitCode = broken.length === 0 ? 0 : 1;

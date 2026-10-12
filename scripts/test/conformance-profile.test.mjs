@@ -89,42 +89,56 @@ test("--check fails when README.md says the suite composes with a layer no fixtu
   );
 });
 
-// Each case edits one fixture and names the line the profile must print for it.
+// Rewrites a fixture's text by changing its parsed JSON in place.
+const editJson = (mutate) => (text) => {
+  const fixture = JSON.parse(text);
+  mutate(fixture);
+  return JSON.stringify(fixture, null, 2) + "\n";
+};
+
+// Each case rewrites one fixture and names the line the profile must print for it.
 const FIELD_CASES = [
   ...["name", "description", "spec", "expected"].map((field) => [
     `without "${field}"`,
-    (fx) => delete fx[field],
+    editJson((fx) => delete fx[field]),
     `missing required field "${field}"`,
   ]),
   [
     "without several required fields",
-    (fx) => {
+    editJson((fx) => {
       delete fx.name;
       delete fx.expected;
-    },
+    }),
     'missing required fields "name", "expected"',
   ],
-  ['with "expected": null', (fx) => (fx.expected = null), 'required field "expected" is not a JSON object'],
+  ['with "expected": null', editJson((fx) => (fx.expected = null)), 'required field "expected" is not a JSON object'],
+  ['with "description": []', editJson((fx) => (fx.description = [])), 'required field "description" is not a string'],
   [
     "with several required fields of the wrong type",
-    (fx) => {
+    editJson((fx) => {
       fx.name = 7;
       fx.spec = "A2A-IDF §1";
-    },
+    }),
     'required field "name" is not a string; required field "spec" is not a JSON array',
   ],
+  [
+    "with a missing field and a field of the wrong type",
+    editJson((fx) => {
+      delete fx.name;
+      fx.spec = {};
+    }),
+    'missing required field "name"; required field "spec" is not a JSON array',
+  ],
+  ["that is not a JSON object", (text) => `[${text.trimEnd()}]\n`, "is not a JSON object"],
+  ["that is not valid JSON", () => '{"name": ', "is not valid JSON (Expecting value: line 1 column 10 (char 9))"],
 ];
 
 for (const [label, args] of [["--check", ["--check"]], ["regeneration", []]]) {
-  for (const [fixtureLabel, mutate, message] of FIELD_CASES) {
+  for (const [fixtureLabel, edit, message] of FIELD_CASES) {
     test(`${label} names a fixture ${fixtureLabel} in one line`, (t) => {
       const root = scratchCopy(t);
       const rel = "fixtures/levels/level-0-self-asserted.json";
-      editFile(root, rel, (text) => {
-        const fixture = JSON.parse(text);
-        mutate(fixture);
-        return JSON.stringify(fixture, null, 2) + "\n";
-      });
+      editFile(root, rel, edit);
       const profile = readFileSync(join(root, "conformance.json"), "utf8");
       const result = run(root, ...args);
       assert.equal(result.status, 1, result.stdout + result.stderr);

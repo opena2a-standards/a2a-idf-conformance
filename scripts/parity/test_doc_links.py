@@ -112,6 +112,22 @@ class SigstoreDirectoryTests(unittest.TestCase):
                 self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
                 self.assertIn("summary: 0 paths checked, 0 broken", proc.stdout)
 
+    def test_output_flags_in_a_comment_are_not_read(self):
+        # The directory is read from the comment line; an output flag after an
+        # unquoted `#` is not part of the command, and a `\` in a comment does
+        # not continue it. Only MANIFEST.sha256.crt is checked.
+        for command in (
+            "cosign sign-blob MANIFEST.sha256 --output-certificate MANIFEST.sha256.crt"
+            " # was: --output-signature MANIFEST.sha256.key",
+            "cosign sign-blob MANIFEST.sha256 --output-certificate MANIFEST.sha256.crt # signs \\\n"
+            "    --output-signature MANIFEST.sha256.key",
+        ):
+            with self.subTest(command=command):
+                doc = f"# Cosigning\n\n```bash\n{command}\n# commit both under .sigstore/<your-org>/\n```\n"
+                proc = run_check({"COSIGNERS.md": doc, ".gitignore": "*.key\n"})
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                self.assertIn("summary: 1 paths checked, 0 broken", proc.stdout)
+
     def test_long_code_block_lines_are_scanned_in_linear_time(self):
         # Two megabyte-long lines with no space in them. A pattern that retries
         # every `.sigstore/` start, or every `<`, against the rest of the line
