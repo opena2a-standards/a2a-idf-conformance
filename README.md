@@ -6,7 +6,7 @@ Implementations of A2A-IDF run the fixtures in this repository to verify byte-ma
 
 ## Status
 
-Byte-pinned and CI-enforced. Every fixture is pinned in [`MANIFEST.sha256`](./MANIFEST.sha256); generator-owned fixtures are reproducible from their documented inputs by [`scripts/generate-fixtures.mjs`](./scripts/generate-fixtures.mjs), and externally contributed snapshot fixtures (regenerated in their source implementation, noted per directory) are preserved and pinned by the same run. CI regenerates the set on every push and fails on any byte drift. New fixtures land incrementally in coordination with the A2A-IDF specification cycle ([#1496](https://github.com/a2aproject/A2A/pull/1496)) and the broader four-layer alignment.
+Byte-pinned and CI-enforced. Every fixture is pinned in [`MANIFEST.sha256`](./MANIFEST.sha256); generator-owned fixtures are reproducible from their documented inputs by [`scripts/generate-fixtures.mjs`](./scripts/generate-fixtures.mjs), and externally contributed snapshot fixtures (regenerated in their source implementation, noted per directory) are preserved and pinned by the same run. CI regenerates the set on every push to `main` and every pull request, and fails on any byte drift. New fixtures land incrementally in coordination with the A2A-IDF specification cycle ([#1496](https://github.com/a2aproject/A2A/pull/1496)) and the broader four-layer alignment.
 
 **Shipped (30 fixtures):**
 
