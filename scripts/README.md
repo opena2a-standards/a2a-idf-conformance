@@ -44,7 +44,18 @@ PASS  /abs/path/to/signature-tampered.json
       observed: REJECT[SIGNATURE_INVALID]
 ```
 
-On failure, the line is `FAIL` followed by `stage:` (which validation step failed) and `reason:` (the specific mismatch). The final line is `summary: N pass, M fail (T fixtures)`. Exit code is 0 if every fixture met its expected verdict (and reject category, when pinned), else 1. The parity gate parses the `observed:` lines to assert cross-implementation agreement.
+On failure, the line is `FAIL` followed by `stage:` (which validation step failed) and `reason:` (the specific mismatch).
+
+When a verifier cannot evaluate a fixture at all, the line is `ERROR` followed by the error (the Python verifier prints the message, the Node verifier the stack trace), with no `observed:` line:
+
+```
+ERROR /abs/path/to/fixture.json
+      value type outside the fixture JCS domain: int
+```
+
+`ERROR` means the verifier raised instead of reaching a verdict: unreadable JSON, a composition fixture missing a required block, or an attestation value outside the minimal JCS domain (numbers, booleans, null). A malformed level-fixture field is not an `ERROR`: it resolves to `REJECT[SHAPE_INVALID]`. An `ERROR` counts as a fail.
+
+The final line is `summary: N pass, M fail (T fixtures)`. Exit code is 0 if every fixture met its expected verdict (and reject category, when pinned), else 1. The parity gate parses the `PASS`/`FAIL`/`ERROR` lines and the `observed:` lines to assert cross-implementation agreement; an `ERROR` in one verifier and a verdict in the other is reported as a divergence.
 
 ## Cross-implementation guarantee
 

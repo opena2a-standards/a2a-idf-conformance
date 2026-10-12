@@ -4,7 +4,8 @@
 Runs every reference verifier in this repository over the byte-pinned
 fixture set and asserts that all implementations agree per fixture on:
 
-  1. gate status   -- PASS/FAIL against the fixture's pinned `expected` block
+  1. gate status   -- PASS/FAIL against the fixture's pinned `expected` block,
+                      or ERROR when the verifier raised instead of deciding
   2. verdict       -- ACCEPT vs REJECT
   3. reject category (when REJECT)
 
@@ -41,8 +42,10 @@ VERIFIERS = {
     },
 }
 
-# `PASS  <path>` or `FAIL  <path>` opens a per-fixture block.
-BLOCK_RE = re.compile(r"^(PASS|FAIL)\s+(\S+)")
+# `PASS  <path>`, `FAIL  <path>` or `ERROR <path>` opens a per-fixture block.
+# ERROR (the verifier raised instead of reaching a verdict) is recorded as its
+# own gate status, so it is reported as a divergence, never as a missing fixture.
+BLOCK_RE = re.compile(r"^(PASS|FAIL|ERROR)\s+(\S+)")
 # `observed: ACCEPT` or `observed: REJECT[CATEGORY]`
 OBSERVED_RE = re.compile(r"^\s*observed:\s+(ACCEPT|REJECT\[([A-Z_]+)\])")
 

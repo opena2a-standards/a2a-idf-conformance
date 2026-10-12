@@ -63,6 +63,8 @@ The verifier rehashes `body` using the algorithm declared in `expected.contentDi
 
 The verifier serializes parameters in the order `keyid; created; nonce; tag`. Fixtures must use the same order to byte-match `expected.signatureInput` and `expected.signatureBase`.
 
+A `tag` of JSON `null` is treated as an absent tag: it is omitted from the signature base and the Signature-Input header, never serialized as `tag="null"`.
+
 ## `keyidResolution`
 
 How the verifier obtains the public key referenced by `keyid`. Two shapes are supported.

@@ -21,6 +21,7 @@ behavior outside the suite's scope — the fixtures pin what the record must
 | [`level-1-agent-mismatch.json`](./level-1-agent-mismatch.json) | 1 | REJECT[AGENT_MISMATCH] | TXT record `agent` names a different agent under the same domain. |
 | [`level-1-kid-mismatch.json`](./level-1-kid-mismatch.json) | 1 | REJECT[KID_MISMATCH] | TXT record `kid` differs from the declared publicKey.kid; the fingerprint still matches. |
 | [`level-1-multi-defect-domain-and-version.json`](./level-1-multi-defect-domain-and-version.json) | 1 | REJECT[DOMAIN_MISMATCH] | Two defects: TXT record name is `_a2a-identity.example.net` and the record version is `v=a2a9`. Pins that the record-name check runs before the record-version check. |
+| [`level-1-idn-provider-url.json`](./level-1-idn-provider-url.json) | 1 | ACCEPT | Internationalized provider.url (`https://bücher.example`) with every binding in A-label form (`xn--bcher-kva.example`): the domain is derived as the WHATWG URL parser reports it, in ASCII. |
 | [`level-2-organization-verified.json`](./level-2-organization-verified.json) | 2 ORGANIZATION_VERIFIED | ACCEPT | Registry attestation: Ed25519 over the RFC 8785 JCS form of the attestation minus `signature`; subject binds to agentId + kid; validationTime inside [verifiedAt, expiresAt]. |
 | [`level-2-attestation-tampered.json`](./level-2-attestation-tampered.json) | 2 | REJECT[SIGNATURE_INVALID] | subject.organization altered after signing. |
 | [`level-2-attestation-expired.json`](./level-2-attestation-expired.json) | 2 | REJECT[EXPIRED] | Valid signature, but expiresAt precedes the pinned validationTime. |
@@ -28,6 +29,8 @@ behavior outside the suite's scope — the fixtures pin what the record must
 | [`level-2-attestation-not-yet-valid.json`](./level-2-attestation-not-yet-valid.json) | 2 | REJECT[NOT_YET_VALID] | Valid signature, but verifiedAt follows the pinned validationTime. |
 | [`level-2-subject-mismatch.json`](./level-2-subject-mismatch.json) | 2 | REJECT[SUBJECT_MISMATCH] | Validly signed attestation issued to a different agentId of the same organization. |
 | [`level-2-multi-defect-subject-and-evidence.json`](./level-2-multi-defect-subject-and-evidence.json) | 2 | REJECT[SUBJECT_MISMATCH] | Two defects: attestation subject.kid differs from the declared kid and `evidence.validationTime` is missing. Pins that the subject binding check runs before the evidence shape check. |
+| [`level-2-issuer-not-object.json`](./level-2-issuer-not-object.json) | 2 | REJECT[SHAPE_INVALID] | Attestation `issuer` is a string, not the `{name, kid, url}` object: a malformed field is a shape reject, never a verifier exception. |
+| [`level-2-jcs-utf16-key-order.json`](./level-2-jcs-utf16-key-order.json) | 2 | ACCEPT | Signed attestation carries the RFC 8785 §3.2.3 sorting example as keys, including one outside the Basic Multilingual Plane: JCS sorts keys by UTF-16 code units, not code points. |
 
 Keys: the agent key is RFC 8032 §7.1 Test 1 ([`../../vectors/rfc8032-7-1.json`](../../vectors/rfc8032-7-1.json));
 the trust-registry issuer key is Test 2 ([`../../vectors/rfc8032-7-1-test2.json`](../../vectors/rfc8032-7-1-test2.json)).
@@ -153,4 +156,5 @@ and another holds a character in U+E000-U+FFFF. JavaScript's default
 compares code points, so `verify.py` sorts on the key's UTF-16BE encoding.
 Property names are not restricted to ASCII.
 [`level-2-attestation-non-bmp-keys.json`](./level-2-attestation-non-bmp-keys.json)
-pins this case.
+and [`level-2-jcs-utf16-key-order.json`](./level-2-jcs-utf16-key-order.json)
+pin this case.

@@ -105,7 +105,7 @@ function sha256(buf) {
 
 function serializeParams(p) {
   const parts = [`keyid="${p.keyid}"`, `created=${p.created}`, `nonce="${p.nonce}"`];
-  if (p.tag !== undefined) parts.push(`tag="${p.tag}"`);
+  if (p.tag !== undefined && p.tag !== null) parts.push(`tag="${p.tag}"`);
   return parts.join(";");
 }
 
@@ -612,6 +612,30 @@ function crossSuiteMismatchFixture() {
   };
 }
 
+function signatureTagNullFixture() {
+  const params = { ...PARAMS_V1, tag: null };
+  const expected = expectedBlock(INPUT_V1, params, TEST1);
+  assertEqual(expected.signatureBase64, ENVOYS_V1_SIG, "null tag serializes as an absent tag (Envoys §14 Vector 1)");
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-composition-v1.json",
+    name: "aim-did-rfc9421/signature-tag-null",
+    description:
+      "The signature-alone request (Envoys §14 Vector 1) with signatureParams.tag set to JSON null. A null tag is an absent tag: it is omitted from the @signature-params line and from the Signature-Input header, never serialized as tag=\"null\". The signature base, and therefore the signature, are byte-identical to Vector 1. Pins identical null handling across verifiers: a verifier that serializes the null reconstructs a different base and fails at the signature-base stage.",
+    spec: [
+      SPEC_A2A_IDF_S6,
+      SPEC_ENVOYS("§14 Vector 1 (GET request, no body)"),
+      SPEC_RFC9421,
+      SPEC_RFC8032("§7.1 Test 1 (Ed25519 keypair)"),
+      SPEC_DID_CORE,
+    ],
+    keypairRef: KEYPAIR_REF,
+    input: INPUT_V1,
+    signatureParams: params,
+    keyidResolution: keyidResolution(TEST1.multibase, TEST1.jwkX),
+    expected,
+  };
+}
+
 // --- level fixtures (A2A-IDF §1 verification levels) ------------------------------
 
 const AGENT_ID = "urn:a2a:agent:example.com:financial-advisor:v2";
@@ -629,7 +653,10 @@ function agentPublicKeyJwk() {
   return { kty: "OKP", crv: "Ed25519", x: TEST1.jwkX, kid: AGENT_KID };
 }
 
-function agentCard(identityLevel, { agentId = AGENT_ID, attestations } = {}) {
+function agentCard(
+  identityLevel,
+  { agentId = AGENT_ID, attestations, providerUrl = "https://example.com" } = {},
+) {
   const params = {
     version: "1.0.0",
     identityLevel,
@@ -639,7 +666,7 @@ function agentCard(identityLevel, { agentId = AGENT_ID, attestations } = {}) {
   if (attestations !== undefined) params.attestations = attestations;
   return {
     name: "financial-advisor-agent",
-    provider: { organization: "Example Corp", url: "https://example.com" },
+    provider: { organization: "Example Corp", url: providerUrl },
     capabilities: {
       extensions: [
         {
@@ -673,6 +700,7 @@ function domainAttestations() {
 }
 
 // Signs an organization attestation (RFC 8785 JCS of the object minus `signature`).
+// `extra` adds fields before signing; `tamper` edits the attestation after signing.
 function signedOrgAttestation({ verifiedAt, expiresAt, subjectAgentId = AGENT_ID, subjectKid = AGENT_KID, tamper, extra } = {}) {
   const unsigned = {
     type: "organization",
@@ -848,6 +876,45 @@ function level1MultiDefectFixture() {
   };
 }
 
+const IDN_PROVIDER_URL = "https://bücher.example";
+const IDN_DOMAIN = "xn--bcher-kva.example";
+
+function level1IdnProviderUrlFixture() {
+  // The WHATWG URL parser reports an internationalized host as its A-label.
+  assertEqual(new URL(IDN_PROVIDER_URL).hostname, IDN_DOMAIN, "IDN provider.url A-label");
+  const fp = agentFingerprint();
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+    name: "levels/level-1-idn-provider-url",
+    description:
+      "Level 1 (DOMAIN_VERIFIED) for an internationalized domain: provider.url is https://bücher.example, and every binding (attestation domain, agentId domain, DNS record name) uses its ASCII A-label xn--bcher-kva.example, the only form the agentId URN grammar and DNS admit. A conforming verifier derives the domain from provider.url in A-label form, as the WHATWG URL parser reports it, and ACCEPTs. A verifier that compares the Unicode host against the A-label bindings reports a spurious DOMAIN_MISMATCH.",
+    spec: [
+      ...levelSpecBase("Level 1 DNS Verification (internationalized domain)"),
+      { id: "WHATWG URL", ref: "https://url.spec.whatwg.org/#concept-domain-to-ascii", section: "domain to ASCII" },
+    ],
+    level: 1,
+    agentCard: agentCard("DOMAIN_VERIFIED", {
+      agentId: `urn:a2a:agent:${IDN_DOMAIN}:financial-advisor:v2`,
+      providerUrl: IDN_PROVIDER_URL,
+      attestations: [
+        {
+          type: "domain",
+          domain: IDN_DOMAIN,
+          verifiedAt: "2026-02-17T00:00:00Z",
+          method: "DNS_TXT",
+        },
+      ],
+    }),
+    evidence: {
+      dnsTxt: {
+        recordName: `_a2a-identity.${IDN_DOMAIN}`,
+        recordValue: dnsTxtRecordValue(fp),
+      },
+    },
+    expected: { verifyResult: "ACCEPT" },
+  };
+}
+
 function issuerPublicKeyJwk() {
   return { kty: "OKP", crv: "Ed25519", x: TEST2.jwkX, kid: ISSUER_KID };
 }
@@ -960,6 +1027,59 @@ function level2NonBmpKeysFixture() {
     name: "levels/level-2-attestation-non-bmp-keys",
     description:
       "Level 2 (ORGANIZATION_VERIFIED): the valid organization attestation with one additional member, rfc8785SortingExample, whose property names are the RFC 8785 §3.2.3 sorting example. That set contains a key outside the Basic Multilingual Plane (U+1F600) and a key in U+E000-U+FFFF (U+FB33), so ordering by UTF-16 code units (required) and by Unicode code points (not conforming) produce different signing inputs. The registry signed the UTF-16-ordered JCS form. A conforming verifier includes the unknown member in the signing input, sorts it per RFC 8785 §3.2.3, and ACCEPTs; a verifier that sorts by code point reconstructs different bytes and rejects with SIGNATURE_INVALID.",
+    spec: [
+      SPEC_IDF_LEVELS("§1 Organization Verification (registry attestation)"),
+      SPEC_RFC8785("§3.2.3 Sorting of Object Properties (UTF-16 code units)"),
+      SPEC_RFC8032("§7.1 Test 1 (agent key), Test 2 (registry issuer key)"),
+    ],
+    level: 2,
+    agentCard: agentCard("ORGANIZATION_VERIFIED", { attestations: [attestation] }),
+    evidence: {
+      issuerPublicKey: issuerPublicKeyJwk(),
+      validationTime: VALIDATION_TIME,
+    },
+    expected: { verifyResult: "ACCEPT" },
+  };
+}
+
+function level2IssuerNotObjectFixture() {
+  const attestation = signedOrgAttestation({
+    verifiedAt: "2026-02-17T00:00:00Z",
+    expiresAt: "2027-02-17T00:00:00Z",
+    tamper: (att) => {
+      att.issuer = att.issuer.name;
+    },
+  });
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+    name: "levels/level-2-issuer-not-object",
+    description:
+      "Negative fixture: an ORGANIZATION_VERIFIED attestation whose issuer is a bare string (the registry name) instead of the {name, kid, url} object. Every other field is well-formed. A conforming verifier MUST reject at the shape stage, before any binding or signature check: a malformed field resolves to SHAPE_INVALID, never to an exception.",
+    spec: [
+      SPEC_IDF_LEVELS("§1 Organization Verification (attestation shape)"),
+      SPEC_RFC8032("§7.1 Test 2 (registry issuer key)"),
+    ],
+    level: 2,
+    agentCard: agentCard("ORGANIZATION_VERIFIED", { attestations: [attestation] }),
+    evidence: {
+      issuerPublicKey: issuerPublicKeyJwk(),
+      validationTime: VALIDATION_TIME,
+    },
+    expected: { verifyResult: "REJECT", rejectCategory: "SHAPE_INVALID" },
+  };
+}
+
+function level2JcsUtf16KeyOrderFixture() {
+  const attestation = signedOrgAttestation({
+    verifiedAt: "2026-02-17T00:00:00Z",
+    expiresAt: "2027-02-17T00:00:00Z",
+    extra: { annotations: RFC8785_SORTING_EXAMPLE },
+  });
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+    name: "levels/level-2-jcs-utf16-key-order",
+    description:
+      "Level 2 (ORGANIZATION_VERIFIED) with an annotations object whose keys are the RFC 8785 §3.2.3 property-sorting example, including U+1F600 (outside the Basic Multilingual Plane) and U+FB33. JCS sorts keys by UTF-16 code units, which puts U+1F600 (surrogates D83D DE00) before U+FB33; a code-point sort reverses them. The registry signed the UTF-16 order, so a conforming verifier ACCEPTs, and a verifier that sorts by code point reconstructs a different signing input and reports a spurious SIGNATURE_INVALID.",
     spec: [
       SPEC_IDF_LEVELS("§1 Organization Verification (registry attestation)"),
       SPEC_RFC8785("§3.2.3 Sorting of Object Properties (UTF-16 code units)"),
@@ -1102,6 +1222,7 @@ const FILES = {
   "fixtures/composition/aim-did-rfc9421/key-substituted.json": keySubstitutedFixture(),
   "fixtures/composition/aim-did-rfc9421/body-tampered.json": bodyTamperedFixture(),
   "fixtures/composition/aim-did-rfc9421/cross-suite-mismatch.json": crossSuiteMismatchFixture(),
+  "fixtures/composition/aim-did-rfc9421/signature-tag-null.json": signatureTagNullFixture(),
   "fixtures/levels/level-0-self-asserted.json": level0Fixture(),
   "fixtures/levels/level-0-agent-id-malformed.json": level0MalformedFixture(),
   "fixtures/levels/level-1-domain-verified.json": level1Fixture(),
@@ -1110,6 +1231,7 @@ const FILES = {
   "fixtures/levels/level-1-agent-mismatch.json": level1AgentMismatchFixture(),
   "fixtures/levels/level-1-kid-mismatch.json": level1KidMismatchFixture(),
   "fixtures/levels/level-1-multi-defect-domain-and-version.json": level1MultiDefectFixture(),
+  "fixtures/levels/level-1-idn-provider-url.json": level1IdnProviderUrlFixture(),
   "fixtures/levels/level-2-organization-verified.json": level2Fixture(),
   "fixtures/levels/level-2-attestation-tampered.json": level2TamperedFixture(),
   "fixtures/levels/level-2-attestation-expired.json": level2ExpiredFixture(),
@@ -1117,6 +1239,8 @@ const FILES = {
   "fixtures/levels/level-2-attestation-not-yet-valid.json": level2NotYetValidFixture(),
   "fixtures/levels/level-2-subject-mismatch.json": level2SubjectMismatchFixture(),
   "fixtures/levels/level-2-multi-defect-subject-and-evidence.json": level2MultiDefectFixture(),
+  "fixtures/levels/level-2-issuer-not-object.json": level2IssuerNotObjectFixture(),
+  "fixtures/levels/level-2-jcs-utf16-key-order.json": level2JcsUtf16KeyOrderFixture(),
 };
 
 function assertEqual(actual, expected, what) {

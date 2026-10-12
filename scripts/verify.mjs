@@ -163,7 +163,8 @@ function serializeParams(p) {
     `created=${p.created}`,
     `nonce="${p.nonce}"`,
   ];
-  if (p.tag !== undefined) parts.push(`tag="${p.tag}"`);
+  // A null tag is treated as an absent tag, never serialized as tag="null".
+  if (p.tag !== undefined && p.tag !== null) parts.push(`tag="${p.tag}"`);
   return parts.join(";");
 }
 
@@ -342,6 +343,16 @@ function isNonEmptyString(v) {
   return typeof v === "string" && v.length > 0;
 }
 
+// RegExp.test coerces its argument, so ["2026-01-01T00:00:00Z"] would match.
+function isTimestamp(v) {
+  return typeof v === "string" && TIMESTAMP_RE.test(v);
+}
+
+// A non-array attestations value (string, object, number) carries no attestation.
+function attestationsOf(p) {
+  return Array.isArray(p.attestations) ? p.attestations : [];
+}
+
 function ed25519KeyFromJwk(jwk) {
   if (
     !jwk ||
@@ -360,7 +371,8 @@ function ed25519KeyFromJwk(jwk) {
 
 function hostnameOf(url) {
   try {
-    return new URL(url).hostname;
+    // A URL without a host (mailto:, urn:) yields "", treated as unparseable.
+    return new URL(url).hostname || null;
   } catch {
     return null;
   }
@@ -407,7 +419,7 @@ function evaluateIdentity(fixture) {
 }
 
 function evaluateDomainVerified(fixture, card, p, pk) {
-  const att = (p.attestations ?? []).find((a) => a?.type === "domain");
+  const att = attestationsOf(p).find((a) => a?.type === "domain");
   if (!att) return reject("SHAPE_INVALID", "DOMAIN_VERIFIED requires a domain attestation");
   if (!isNonEmptyString(p.agentId)) {
     return reject("SHAPE_INVALID", "DOMAIN_VERIFIED requires an agentId");
@@ -448,14 +460,14 @@ function evaluateDomainVerified(fixture, card, p, pk) {
 }
 
 function evaluateOrganizationVerified(fixture, p, pk) {
-  const att = (p.attestations ?? []).find((a) => a?.type === "organization");
+  const att = attestationsOf(p).find((a) => a?.type === "organization");
   if (!att) return reject("SHAPE_INVALID", "ORGANIZATION_VERIFIED requires an organization attestation");
   const shapeOk =
     att.issuer && isNonEmptyString(att.issuer.name) && isNonEmptyString(att.issuer.kid) &&
     isNonEmptyString(att.issuer.url) &&
     att.subject && isNonEmptyString(att.subject.organization) &&
     isNonEmptyString(att.subject.agentId) && isNonEmptyString(att.subject.kid) &&
-    TIMESTAMP_RE.test(att.verifiedAt ?? "") && TIMESTAMP_RE.test(att.expiresAt ?? "") &&
+    isTimestamp(att.verifiedAt) && isTimestamp(att.expiresAt) &&
     isNonEmptyString(att.signature);
   if (!shapeOk) return reject("SHAPE_INVALID", "organization attestation is missing required fields");
   if (att.subject.agentId !== p.agentId || att.subject.kid !== pk.kid) {
@@ -463,7 +475,7 @@ function evaluateOrganizationVerified(fixture, p, pk) {
   }
   const ev = fixture.evidence ?? {};
   const issuerKey = ed25519KeyFromJwk(ev.issuerPublicKey);
-  if (issuerKey === null || !TIMESTAMP_RE.test(ev.validationTime ?? "")) {
+  if (issuerKey === null || !isTimestamp(ev.validationTime)) {
     return reject("SHAPE_INVALID", "evidence.{issuerPublicKey,validationTime} missing or malformed");
   }
   const unsigned = { ...att };
