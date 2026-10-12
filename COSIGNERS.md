@@ -60,7 +60,7 @@ SHA-256 of `MANIFEST.sha256`.
 
 | Cosigner | Commit SHA | Node verifier | Python verifier | Sigstore artifact | Date |
 |---|---|---|---|---|---|
-| opena2a-org (self-cosigned baseline, CI) | every `main` push (see CI self-cosignature) | `16 pass, 0 fail` | `16 pass, 0 fail` | Rekor entry per push (keyless CI signature) | 2026-07-04 onward |
+| opena2a-org (self-cosigned baseline, CI) | every `main` push (see CI self-cosignature) | `24 pass, 0 fail` | `24 pass, 0 fail` | Rekor entry per push (keyless CI signature) | 2026-07-04 onward |
 
 Self-cosignature exists to anchor the baseline; second-party signatures are
 what close criterion (c). Recruiting at least one second-party cosigner per
