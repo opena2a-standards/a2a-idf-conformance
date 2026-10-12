@@ -16,7 +16,7 @@ These fixtures use an independent Ed25519 test keypair (not RFC 8032 §7.1). The
 ## Cross-suite notes
 
 - These are **snapshot fixtures** — signatures are pre-generated and pinned. They demonstrate byte-match correctness of the Hippo implementation against the RFC 9421 signature base construction.
-- The `tag` parameter coverage (present/absent) directly exercises the Envoys v1.5 §4.3 mechanism discussed in [A2A #1829](https://github.com/a2aproject/A2A/issues/1829).
+- The `tag` parameter coverage (present/absent) directly exercises the Envoys v1.5 §4.3 mechanism discussed in [A2A #1829](https://github.com/a2aproject/A2A/issues/1829). Both reference verifiers enforce the rule: `a2a-message` or an absent tag is accepted, and any other tag is rejected as `TAG_MISMATCH`. The rejected case is pinned in [`../aim-did-rfc9421/signature-tag-foreign.json`](../aim-did-rfc9421/signature-tag-foreign.json).
 - Signature base conforms to RFC 9421 §2.5: only `@method`, `@path`, `content-digest` are covered components. `created`, `nonce`, `keyid` appear exclusively as `@signature-params` parameters per §2.3.
 
 ## Verification

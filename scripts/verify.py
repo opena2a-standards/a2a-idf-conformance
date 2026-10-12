@@ -26,9 +26,10 @@ import hashlib
 import json
 import re
 import sys
+import unicodedata
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 # Content-Digest algorithms supported by this verifier (RFC 9530).
 # Fixtures may declare the expected digest with any of these prefixes;
@@ -41,6 +42,8 @@ CONTENT_DIGEST_ALGORITHMS = {
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+# Envoys signature/v1 §4.3: the RFC 9421 `tag` an A2A message signature carries.
+A2A_MESSAGE_TAG = "a2a-message"
 
 IDENTITY_EXTENSION_URI = "https://a2a-protocol.org/extensions/agent-identity"
 IDENTITY_LEVELS = ("SELF_ASSERTED", "DOMAIN_VERIFIED", "ORGANIZATION_VERIFIED")
@@ -177,6 +180,7 @@ def _b64url_nopad(data: bytes) -> str:
 
 def serialize_params(p: dict[str, Any]) -> str:
     parts = [f'keyid="{p["keyid"]}"', f'created={p["created"]}', f'nonce="{p["nonce"]}"']
+    # A null tag is treated as an absent tag, as in verify.mjs.
     if "tag" in p and p["tag"] is not None:
         parts.append(f'tag="{p["tag"]}"')
     return ";".join(parts)
@@ -285,6 +289,17 @@ def verify_composition_fixture(fixture: dict[str, Any]) -> tuple[bool, str | Non
             f"reason: reconstructed {sig_input} != expected {expected.get('signatureInput')}",
         ]
 
+    # Envoys §4.3 tag rule, checked before any cryptography as in verify.mjs:
+    # an absent (or null) tag is `a2a-message`, any other tag is rejected.
+    tag = fixture["signatureParams"].get("tag")
+    if tag is None:
+        tag = A2A_MESSAGE_TAG
+    if tag != A2A_MESSAGE_TAG:
+        ok, observed, lines = gate_verdict(expected, "REJECT", "TAG_MISMATCH")
+        if not ok:
+            lines[-1] += f' (tag "{tag}" is not "{A2A_MESSAGE_TAG}")'
+        return ok, observed, lines
+
     # Extract public key per A2A-IDF §6 dual-shape resolution.
     try:
         pubkey = extract_public_key(fixture["keyidResolution"])
@@ -358,6 +373,22 @@ def _is_nonempty_str(v: Any) -> bool:
     return isinstance(v, str) and len(v) > 0
 
 
+def _is_timestamp(v: Any) -> bool:
+    return isinstance(v, str) and TIMESTAMP_RE.match(v) is not None
+
+
+def _as_dict(v: Any) -> dict[str, Any]:
+    """A JSON object as a dict; any other value (string, list, null) as {}.
+
+    Mirrors the Node verifier, where reading a field of a non-object yields
+    undefined, so a malformed field resolves to SHAPE_INVALID, not an exception."""
+    return v if isinstance(v, dict) else {}
+
+
+def _as_list(v: Any) -> list[Any]:
+    return v if isinstance(v, list) else []
+
+
 def _ed25519_key_from_jwk(jwk: Any) -> Ed25519PublicKey | None:
     if (
         not isinstance(jwk, dict)
@@ -375,11 +406,52 @@ def _ed25519_key_from_jwk(jwk: Any) -> Ed25519PublicKey | None:
     return Ed25519PublicKey.from_public_bytes(raw)
 
 
+# Label separators UTS #46 maps to "." (full stop, ideographic, fullwidth, halfwidth).
+_HOST_LABEL_SEPARATORS = re.compile(
+    "[.\N{IDEOGRAPHIC FULL STOP}\N{FULLWIDTH FULL STOP}\N{HALFWIDTH IDEOGRAPHIC FULL STOP}]"
+)
+
+
+def _ascii_host(host: str) -> str:
+    """Return a hostname in the ASCII form Node's WHATWG URL parser reports.
+
+    urlparse keeps an internationalized host in Unicode, while the WHATWG
+    parser returns its A-label (`bücher.example` -> `xn--bcher-kva.example`).
+    Non-ASCII labels are mapped as UTS #46 non-transitional processing maps
+    them in the common case (NFKC, lowercase; `ß` is kept), then
+    Punycode-encoded with the `xn--` prefix."""
+    if host.isascii():
+        return host.lower()
+    mapped = unicodedata.normalize("NFKC", host).lower()
+    labels = []
+    for label in _HOST_LABEL_SEPARATORS.split(mapped):
+        if label.isascii():
+            labels.append(label)
+        else:
+            labels.append("xn--" + label.encode("punycode").decode("ascii"))
+    return ".".join(labels)
+
+
+# Forbidden domain code points: the WHATWG URL parser refuses a host containing one.
+_FORBIDDEN_DOMAIN_CHARS = re.compile(r"[\x00-\x20#%/:<>?@\[\\\]^|\x7f]")
+
+
 def _hostname_of(url: Any) -> str | None:
+    """The provider domain as Node's `new URL(url).hostname` reports it, or None
+    where that parser throws or finds no host."""
     if not isinstance(url, str):
         return None
-    host = urlparse(url).hostname
-    return host if host else None
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+    except ValueError:
+        return None
+    if not host:
+        return None
+    if parsed.netloc.rpartition("@")[2].startswith("["):
+        return f"[{host}]"  # IPv6 literal; the WHATWG hostname keeps the brackets
+    host = _ascii_host(unquote(host))
+    return None if _FORBIDDEN_DOMAIN_CHARS.search(host) else host
 
 
 def _reject(category: str, reason: str) -> dict[str, Any]:
@@ -391,8 +463,8 @@ def evaluate_identity(fixture: dict[str, Any]) -> dict[str, Any]:
 
     The check order is part of the cross-implementation contract: shape first,
     then per-level binding checks, then cryptography, then validity window."""
-    card = fixture.get("agentCard") or {}
-    extensions = (card.get("capabilities") or {}).get("extensions")
+    card = _as_dict(fixture.get("agentCard"))
+    extensions = _as_dict(card.get("capabilities")).get("extensions")
     if not isinstance(extensions, list):
         return _reject("SHAPE_INVALID", "agentCard.capabilities.extensions missing")
     ext = next(
@@ -404,8 +476,9 @@ def evaluate_identity(fixture: dict[str, Any]) -> dict[str, Any]:
     p = ext["params"]
     if p.get("identityLevel") not in IDENTITY_LEVELS:
         return _reject("SHAPE_INVALID", f"unknown identityLevel: {p.get('identityLevel')}")
+    # A declared agentId must be a URN; a JSON null counts as declared, as in verify.mjs.
     agent_id = p.get("agentId")
-    if agent_id is not None and not (
+    if "agentId" in p and not (
         isinstance(agent_id, str) and AGENT_ID_URN_RE.match(agent_id)
     ):
         return _reject(
@@ -413,7 +486,7 @@ def evaluate_identity(fixture: dict[str, Any]) -> dict[str, Any]:
             f"agentId is not a urn:a2a:agent:{{domain}}:{{agent-name}}:{{version}} URN: {agent_id}",
         )
     pk = p.get("publicKey")
-    if _ed25519_key_from_jwk(pk) is None or not _is_nonempty_str((pk or {}).get("kid")):
+    if _ed25519_key_from_jwk(pk) is None or not _is_nonempty_str(pk.get("kid")):
         return _reject("SHAPE_INVALID", "publicKey is not an Ed25519 OKP JWK with a kid")
 
     level = p["identityLevel"]
@@ -430,21 +503,21 @@ def evaluate_domain_verified(
     fixture: dict[str, Any], card: dict[str, Any], p: dict[str, Any], pk: dict[str, Any]
 ) -> dict[str, Any]:
     att = next(
-        (a for a in (p.get("attestations") or []) if isinstance(a, dict) and a.get("type") == "domain"),
+        (a for a in _as_list(p.get("attestations")) if isinstance(a, dict) and a.get("type") == "domain"),
         None,
     )
     if att is None:
         return _reject("SHAPE_INVALID", "DOMAIN_VERIFIED requires a domain attestation")
     if not _is_nonempty_str(p.get("agentId")):
         return _reject("SHAPE_INVALID", "DOMAIN_VERIFIED requires an agentId")
-    domain = _hostname_of((card.get("provider") or {}).get("url"))
+    domain = _hostname_of(_as_dict(card.get("provider")).get("url"))
     if domain is None:
         return _reject("SHAPE_INVALID", "provider.url missing or unparseable")
     if att.get("domain") != domain:
         return _reject(
             "DOMAIN_MISMATCH", f"attestation domain {att.get('domain')} != provider domain {domain}"
         )
-    dns_txt = (fixture.get("evidence") or {}).get("dnsTxt") or {}
+    dns_txt = _as_dict(_as_dict(fixture.get("evidence")).get("dnsTxt"))
     record_name = dns_txt.get("recordName")
     record_value = dns_txt.get("recordValue")
     if not _is_nonempty_str(record_name) or not _is_nonempty_str(record_value):
@@ -483,15 +556,15 @@ def evaluate_organization_verified(
     att = next(
         (
             a
-            for a in (p.get("attestations") or [])
+            for a in _as_list(p.get("attestations"))
             if isinstance(a, dict) and a.get("type") == "organization"
         ),
         None,
     )
     if att is None:
         return _reject("SHAPE_INVALID", "ORGANIZATION_VERIFIED requires an organization attestation")
-    issuer = att.get("issuer") or {}
-    subject = att.get("subject") or {}
+    issuer = _as_dict(att.get("issuer"))
+    subject = _as_dict(att.get("subject"))
     shape_ok = (
         _is_nonempty_str(issuer.get("name"))
         and _is_nonempty_str(issuer.get("kid"))
@@ -499,8 +572,8 @@ def evaluate_organization_verified(
         and _is_nonempty_str(subject.get("organization"))
         and _is_nonempty_str(subject.get("agentId"))
         and _is_nonempty_str(subject.get("kid"))
-        and TIMESTAMP_RE.match(att.get("verifiedAt") or "") is not None
-        and TIMESTAMP_RE.match(att.get("expiresAt") or "") is not None
+        and _is_timestamp(att.get("verifiedAt"))
+        and _is_timestamp(att.get("expiresAt"))
         and _is_nonempty_str(att.get("signature"))
     )
     if not shape_ok:
@@ -509,10 +582,10 @@ def evaluate_organization_verified(
         return _reject(
             "SUBJECT_MISMATCH", "attestation subject does not bind to the declared agentId/kid"
         )
-    ev = fixture.get("evidence") or {}
+    ev = _as_dict(fixture.get("evidence"))
     issuer_key = _ed25519_key_from_jwk(ev.get("issuerPublicKey"))
     validation_time = ev.get("validationTime")
-    if issuer_key is None or TIMESTAMP_RE.match(validation_time or "") is None:
+    if issuer_key is None or not _is_timestamp(validation_time):
         return _reject("SHAPE_INVALID", "evidence.{issuerPublicKey,validationTime} missing or malformed")
     unsigned = {k: v for k, v in att.items() if k != "signature"}
     tbs = _jcs(unsigned).encode("utf-8")
@@ -542,7 +615,7 @@ def evaluate_organization_verified(
 def verify_level_fixture(fixture: dict[str, Any]) -> tuple[bool, str | None, list[str]]:
     observed = evaluate_identity(fixture)
     ok, observed_str, lines = gate_verdict(
-        fixture.get("expected") or {}, observed["verdict"], observed.get("category")
+        _as_dict(fixture.get("expected")), observed["verdict"], observed.get("category")
     )
     if not ok and observed.get("reason") and lines:
         lines[-1] += f" ({observed['reason']})"

@@ -17,8 +17,11 @@ A2A-IDF identity-framework composition fixtures. Each fixture exercises:
 | [`key-substituted.json`](./key-substituted.json) | REJECT[SIGNATURE_INVALID] | Vector 1 signature, DID Document serving the RFC 8032 §7.1 Test 2 key instead | none |
 | [`body-tampered.json`](./body-tampered.json) | REJECT[SIGNATURE_INVALID] | Vector 2 signature over a body later modified (Content-Digest recomputed, no re-sign) | none |
 | [`cross-suite-mismatch.json`](./cross-suite-mismatch.json) | REJECT[CROSS_SUITE_MISMATCH] | Vector 1 request signed by the RFC 8032 §7.1 Test 2 key, DID Document serving that key; declares byte-identity with Vector 1 and `expected.signatureBase64` carries the Vector 1 bytes | none |
+| [`signature-tag-null.json`](./signature-tag-null.json) | ACCEPT | Envoys §14 Vector 1 with `signatureParams.tag` set to `null` (a null tag is an absent tag; signature byte-identical to Vector 1) | none |
+| [`signature-tag-absent.json`](./signature-tag-absent.json) | ACCEPT | Envoys §14 Vector 1 with no tag: Envoys §4.3 back-compat, an absent tag is treated as `a2a-message` | none |
+| [`signature-tag-foreign.json`](./signature-tag-foreign.json) | REJECT[TAG_MISMATCH] | Vector 1 request signed by the correct key with `tag="not-a2a-message"`: the signature verifies, but the tag names another application | none |
 
-The negatives each pin exactly one defect against a fixture that is otherwise valid, so a verifier that rejects for the wrong reason still fails the suite (the reject must occur at the Ed25519 verification of the resolved key or, for `cross-suite-mismatch`, at the cross-suite byte-match of the verified signature, not at fixture-integrity stages).
+The negatives each pin exactly one defect against a fixture that is otherwise valid, so a verifier that rejects for the wrong reason still fails the suite. The `SIGNATURE_INVALID` rejects must occur at the Ed25519 verification of the resolved key and the `cross-suite-mismatch` reject at the cross-suite byte-match of the verified signature, not at fixture-integrity stages. The `TAG_MISMATCH` reject must come from the Envoys §4.3 tag rule, which runs before key resolution: its signature verifies, so a verifier that ignores the tag accepts it and fails. The `signature-tag-absent` / `signature-tag-foreign` pair differs only in the tag, so it separates an absent tag (accepted as `a2a-message`) from any other value.
 
 ## Cross-suite parity
 
@@ -32,6 +35,7 @@ The reference verifiers in [`../../../scripts/`](../../../scripts/) check the wi
 
 - Recompute `Content-Digest` from `input.body`
 - Reconstruct the RFC 9421 signature base
+- Apply the Envoys §4.3 tag rule (`a2a-message` or absent accepted, any other tag rejected as `TAG_MISMATCH`)
 - Resolve the keyid per A2A-IDF §6 (this fixture set pins the `application/did+json` branch)
 - Verify the Ed25519 signature against the resolved public key
 - Cross-suite byte-match of the verified signature bytes (parsed from the `Signature` header) against the declared Envoys §14 vector
@@ -45,4 +49,4 @@ node ../../../scripts/verify.mjs .
 python3 ../../../scripts/verify.py .
 ```
 
-Both reference verifiers produce `PASS` on every fixture: the positives verify (`observed: ACCEPT`) and the negatives are rejected for the pinned reason (`observed: REJECT[SIGNATURE_INVALID]`, or `observed: REJECT[CROSS_SUITE_MISMATCH]` for `cross-suite-mismatch.json`).
+Both reference verifiers produce `PASS` on every fixture: the positives verify (`observed: ACCEPT`) and the negatives are rejected for the pinned reason (`observed: REJECT[SIGNATURE_INVALID]`, `observed: REJECT[TAG_MISMATCH]` for `signature-tag-foreign.json`, or `observed: REJECT[CROSS_SUITE_MISMATCH]` for `cross-suite-mismatch.json`).
