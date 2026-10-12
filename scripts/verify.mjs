@@ -402,6 +402,21 @@ function attestationsOf(p) {
   return Array.isArray(p.attestations) ? p.attestations : [];
 }
 
+// With the `u` flag a surrogate pair is one code point, so this class matches
+// lone surrogates only.
+const LONE_SURROGATE_RE = /[\uD800-\uDFFF]/u;
+
+// True when a string or property name anywhere in `value` holds a lone
+// surrogate, which has no UTF-8 encoding and which RFC 8785 §3.2.2.2 forbids.
+function hasLoneSurrogate(value) {
+  if (typeof value === "string") return LONE_SURROGATE_RE.test(value);
+  if (Array.isArray(value)) return value.some(hasLoneSurrogate);
+  if (value !== null && typeof value === "object") {
+    return Object.entries(value).some(([k, v]) => LONE_SURROGATE_RE.test(k) || hasLoneSurrogate(v));
+  }
+  return false;
+}
+
 function ed25519KeyFromJwk(jwk) {
   if (
     !jwk ||
@@ -419,6 +434,8 @@ function ed25519KeyFromJwk(jwk) {
 }
 
 function hostnameOf(url) {
+  // new URL() coerces its argument, so ["https://example.com"] would parse.
+  if (typeof url !== "string") return null;
   try {
     // A URL without a host (mailto:, urn:) yields "", treated as unparseable.
     return new URL(url).hostname || null;
@@ -520,6 +537,10 @@ function evaluateOrganizationVerified(fixture, p, pk) {
     isTimestamp(att.verifiedAt) && isTimestamp(att.expiresAt) &&
     isNonEmptyString(att.signature);
   if (!shapeOk) return reject("SHAPE_INVALID", "organization attestation is missing required fields");
+  // The attestation is signed over its JCS form, which a lone surrogate cannot enter.
+  if (hasLoneSurrogate(att)) {
+    return reject("SHAPE_INVALID", "organization attestation holds a lone surrogate");
+  }
   if (att.subject.agentId !== p.agentId || att.subject.kid !== pk.kid) {
     return reject("SUBJECT_MISMATCH", "attestation subject does not bind to the declared agentId/kid");
   }

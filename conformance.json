@@ -329,6 +329,48 @@
       "description": "The absent half of the §4.3 tag pair: the signature-alone request (Envoys §14 Vector 1) with no tag parameter. An absent tag is treated as `a2a-message` for back-compat, so a conforming verifier MUST accept it. Paired with signature-tag-foreign, which differs only in carrying a tag other than `a2a-message`: a verifier that requires an explicit tag fails this fixture, and one that ignores the tag fails the other."
     },
     {
+      "fixture": "fixtures/composition/aim-did-rfc9421/signature-tag-foreign-tampered.json",
+      "name": "aim-did-rfc9421/signature-tag-foreign-tampered",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape: application/did+json vs compact form)"
+        },
+        {
+          "id": "Envoys signature/v1",
+          "ref": "https://envoys.me/specs/signature/v1",
+          "version": "1.5.1",
+          "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+          "section": "§4.3 tag parameter"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§3.2.1 Enforcing Application Requirements"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§3.2 Verifying a Signature"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (Ed25519 keypair)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "REJECT[TAG_MISMATCH]",
+      "description": "Check-order fixture with two defects: the signature-alone request carries tag=\"not-a2a-message\" (a TAG_MISMATCH) and its Ed25519 signature bytes are altered in the first base64 character (a SIGNATURE_INVALID). The §4.3 tag rule is an application requirement on the signature parameters and is applied before key resolution and signature verification, so a conforming verifier MUST reject with TAG_MISMATCH. A verifier that checks the signature first reports SIGNATURE_INVALID and fails this fixture. signature-tag-foreign cannot pin this order: its signature verifies, so both orders reject it with TAG_MISMATCH."
+    },
+    {
       "fixture": "fixtures/composition/aim-did-rfc9421/signature-tag-foreign.json",
       "name": "aim-did-rfc9421/signature-tag-foreign",
       "fixtureType": "composition",
@@ -505,6 +547,26 @@
       "description": "Negative fixture: a SELF_ASSERTED AgentCard whose agentId is not in the urn:a2a:agent:{domain}:{agent-name}:{version} format required by A2A-IDF §1 for declared agent identifiers. A conforming verifier MUST reject the declaration shape: a malformed agentId cannot serve as a stable identifier across AgentCard updates and key rotations."
     },
     {
+      "fixture": "fixtures/levels/level-0-agent-id-null.json",
+      "name": "levels/level-0-agent-id-null",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Agent Identity Verification Levels — Agent Identifiers (declared agentId with a null value)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 (Ed25519 test keypairs)"
+        }
+      ],
+      "expected": "REJECT[SHAPE_INVALID]",
+      "description": "Negative fixture: a SELF_ASSERTED AgentCard whose agentId member is JSON null. A Level 0 card may omit agentId, but a member that is present declares an identifier, and null is not a urn:a2a:agent:{domain}:{agent-name}:{version} URN. A conforming verifier MUST reject the declaration shape. A verifier that reads a null member as an absent one accepts the card and fails this fixture."
+    },
+    {
       "fixture": "fixtures/levels/level-0-self-asserted.json",
       "name": "levels/level-0-self-asserted",
       "fixtureType": "level",
@@ -543,6 +605,26 @@
       ],
       "expected": "REJECT[AGENT_MISMATCH]",
       "description": "Negative fixture: the DOMAIN_VERIFIED AgentCard with a DNS TXT record whose agent field names a different agent under the same domain (agent=payments-bot, while the agentId names financial-advisor). Record name, kid, and fingerprint all match. A conforming verifier MUST reject: the domain owner endorsed this key for a different agent name. Models one agent reusing a record the domain published for another of its agents."
+    },
+    {
+      "fixture": "fixtures/levels/level-1-attestations-not-array.json",
+      "name": "levels/level-1-attestations-not-array",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Agent Identity Verification Levels — Level 1 DNS Verification (attestations array shape)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 (Ed25519 test keypairs)"
+        }
+      ],
+      "expected": "REJECT[SHAPE_INVALID]",
+      "description": "Negative fixture: the DOMAIN_VERIFIED AgentCard whose attestations member is the domain attestation object itself, not an array holding it. Every other field, and the pinned DNS TXT record, is valid. A conforming verifier MUST reject at the shape stage: a value that is not an array carries no attestation, so the card has no domain attestation. A verifier that searches the value without checking its type raises instead of reaching a verdict and fails this fixture."
     },
     {
       "fixture": "fixtures/levels/level-1-domain-mismatch.json",
@@ -668,6 +750,176 @@
       ],
       "expected": "REJECT[DOMAIN_MISMATCH]",
       "description": "Check-order fixture with two defects: the DNS TXT record was published at _a2a-identity.example.net while provider.url is https://example.com (a DOMAIN_MISMATCH), and the record carries an unsupported version v=a2a9 (a SHAPE_INVALID). The record-name binding check precedes the record-version shape check in the contract order, so a conforming verifier MUST reject with DOMAIN_MISMATCH. A verifier that runs every shape check before any binding check reports SHAPE_INVALID and fails this fixture."
+    },
+    {
+      "fixture": "fixtures/levels/level-1-provider-url-backslash-authority.json",
+      "name": "levels/level-1-provider-url-backslash-authority",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Agent Identity Verification Levels — Level 1 DNS Verification (backslash in the provider.url authority)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 (Ed25519 test keypairs)"
+        },
+        {
+          "id": "WHATWG URL",
+          "ref": "https://url.spec.whatwg.org/",
+          "section": "URL parsing (authority state: a backslash ends the authority of a special scheme)"
+        }
+      ],
+      "expected": "REJECT[DOMAIN_MISMATCH]",
+      "description": "Negative fixture: the DOMAIN_VERIFIED AgentCard whose provider.url is https://evil.example\\@example.com (one backslash before the @). In an http or https URL a backslash ends the authority exactly as a slash does, so the host is evil.example and the rest is the path. The domain attestation, the agentId and the DNS TXT record all name example.com. A conforming verifier MUST reject: the provider domain is evil.example, which no binding names. A verifier whose URL parser reads the text before the @ as credentials derives example.com and accepts a card served from another host."
+    },
+    {
+      "fixture": "fixtures/levels/level-1-provider-url-ignored-code-point.json",
+      "name": "levels/level-1-provider-url-ignored-code-point",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Agent Identity Verification Levels — Level 1 DNS Verification (ignored code point in the provider host)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 (Ed25519 test keypairs)"
+        },
+        {
+          "id": "WHATWG URL",
+          "ref": "https://url.spec.whatwg.org/",
+          "section": "domain to ASCII (UTS #46 ignored code points)"
+        }
+      ],
+      "expected": "ACCEPT",
+      "description": "Level 1 (DOMAIN_VERIFIED) with a soft hyphen (U+00AD) in the provider host: provider.url is https://example.com with that code point between exam and ple, written as a JSON Unicode escape in this file. UTS #46 maps the soft hyphen to nothing, so the provider domain is example.com, which every binding names. A conforming verifier drops the ignored code point when it converts the domain to ASCII, as the WHATWG URL parser does, and ACCEPTs. A verifier that Punycode-encodes the label with the soft hyphen in it derives xn--example-oka.com and reports a spurious DOMAIN_MISMATCH."
+    },
+    {
+      "fixture": "fixtures/levels/level-1-provider-url-ipv4-number.json",
+      "name": "levels/level-1-provider-url-ipv4-number",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Agent Identity Verification Levels — Level 1 DNS Verification (numeric provider host)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 (Ed25519 test keypairs)"
+        },
+        {
+          "id": "WHATWG URL",
+          "ref": "https://url.spec.whatwg.org/",
+          "section": "host parsing (IPv4 parser)"
+        }
+      ],
+      "expected": "REJECT[DOMAIN_MISMATCH]",
+      "description": "Negative fixture: the DOMAIN_VERIFIED AgentCard whose provider.url is https://0x7f.0.0.1, while the domain attestation, the agentId and the DNS TXT record name all spell the host the same way, 0x7f.0.0.1. A host whose last label is a number is an IPv4 address, and the WHATWG URL parser reports it in dotted-decimal form: the provider domain is 127.0.0.1. A conforming verifier MUST reject: no binding names 127.0.0.1. A verifier that compares the host as written accepts, and so treats two spellings of one address as two domains."
+    },
+    {
+      "fixture": "fixtures/levels/level-1-provider-url-no-host.json",
+      "name": "levels/level-1-provider-url-no-host",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Agent Identity Verification Levels — Level 1 DNS Verification (provider.url without a host)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 (Ed25519 test keypairs)"
+        },
+        {
+          "id": "WHATWG URL",
+          "ref": "https://url.spec.whatwg.org/",
+          "section": "URL representation (a URL with an opaque path has a null host)"
+        }
+      ],
+      "expected": "REJECT[SHAPE_INVALID]",
+      "description": "Negative fixture: the DOMAIN_VERIFIED AgentCard whose provider.url is mailto:ops@example.com, a URL that has no host. The domain attestation, the agentId and the DNS TXT record all name example.com. A conforming verifier MUST reject at the shape stage: provider.url yields no provider domain to bind to. A verifier that takes the empty host as the domain reports DOMAIN_MISMATCH and fails this fixture."
+    },
+    {
+      "fixture": "fixtures/levels/level-1-provider-url-not-string.json",
+      "name": "levels/level-1-provider-url-not-string",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Agent Identity Verification Levels — Level 1 DNS Verification (provider.url that is not a string)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 (Ed25519 test keypairs)"
+        }
+      ],
+      "expected": "REJECT[SHAPE_INVALID]",
+      "description": "Negative fixture: the DOMAIN_VERIFIED AgentCard whose provider.url is an array holding the URL string https://example.com, not the string itself. The domain attestation, the agentId and the DNS TXT record all name example.com. A conforming verifier MUST reject at the shape stage: provider.url must be a string. A verifier that hands the value to a URL parser without checking its type can have it coerced to the string inside, derive example.com, and accept."
+    },
+    {
+      "fixture": "fixtures/levels/level-1-provider-url-percent-encoded.json",
+      "name": "levels/level-1-provider-url-percent-encoded",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Agent Identity Verification Levels — Level 1 DNS Verification (percent-encoded provider host)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 (Ed25519 test keypairs)"
+        },
+        {
+          "id": "WHATWG URL",
+          "ref": "https://url.spec.whatwg.org/",
+          "section": "host parsing (percent-decoding of a domain)"
+        }
+      ],
+      "expected": "ACCEPT",
+      "description": "Level 1 (DOMAIN_VERIFIED) with a percent-encoded provider host: provider.url is https://ex%61mple.com, where %61 is the letter a. Every binding names example.com. A conforming verifier percent-decodes the host before using it as the provider domain, as the WHATWG URL parser does, and ACCEPTs. A verifier that keeps the host as written, or refuses the percent sign, rejects and fails this fixture."
+    },
+    {
+      "fixture": "fixtures/levels/level-1-provider-url-space-in-host.json",
+      "name": "levels/level-1-provider-url-space-in-host",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Agent Identity Verification Levels — Level 1 DNS Verification (provider.url with a forbidden host code point)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 (Ed25519 test keypairs)"
+        },
+        {
+          "id": "WHATWG URL",
+          "ref": "https://url.spec.whatwg.org/",
+          "section": "host parsing (forbidden domain code points)"
+        }
+      ],
+      "expected": "REJECT[SHAPE_INVALID]",
+      "description": "Negative fixture: the DOMAIN_VERIFIED AgentCard whose provider.url is https://exa mple.com, with a space inside the host. A space is a forbidden host code point, so the URL does not parse. The domain attestation, the agentId and the DNS TXT record all name example.com. A conforming verifier MUST reject at the shape stage: provider.url yields no provider domain. A verifier whose URL parser returns the host with the space in it reports DOMAIN_MISMATCH and fails this fixture."
     },
     {
       "fixture": "fixtures/levels/level-2-attestation-expired.json",
@@ -812,7 +1064,7 @@
         }
       ],
       "expected": "ACCEPT",
-      "description": "Level 2 (ORGANIZATION_VERIFIED) with an annotations object whose keys are the RFC 8785 §3.2.3 property-sorting example, including U+1F600 (outside the Basic Multilingual Plane) and U+FB33. JCS sorts keys by UTF-16 code units, which puts U+1F600 (surrogates D83D DE00) before U+FB33; a code-point sort reverses them. The registry signed the UTF-16 order, so a conforming verifier ACCEPTs, and a verifier that sorts by code point reconstructs a different signing input and reports a spurious SIGNATURE_INVALID."
+      "description": "Level 2 (ORGANIZATION_VERIFIED) with an annotations object whose ASCII property names sort differently under RFC 8785 §3.2.3 than under two common alternatives. JCS compares property names as UTF-16 code units, so 10 sorts before 9 (digits compare as characters, not as numbers) and B and Z sort before _ and a (upper case before lower case). The registry signed that order. A conforming verifier ACCEPTs; a verifier that sorts numerically, case-insensitively or by locale collation reconstructs a different signing input and reports a spurious SIGNATURE_INVALID. The non-ASCII half of the rule, code units against code points, is pinned by level-2-attestation-non-bmp-keys."
     },
     {
       "fixture": "fixtures/levels/level-2-multi-defect-subject-and-evidence.json",
@@ -888,6 +1140,26 @@
       ],
       "expected": "REJECT[SUBJECT_MISMATCH]",
       "description": "Negative fixture: an ORGANIZATION_VERIFIED AgentCard carrying a registry attestation that is validly signed and inside its validity window, but whose subject.agentId names a different agent of the same organization (urn:a2a:agent:example.com:payments-bot:v1). subject.kid matches the declared key ID. A conforming verifier MUST reject: the attestation does not bind to the declared agentId. Models replay of an attestation the registry issued to another agent."
+    },
+    {
+      "fixture": "fixtures/levels/level-2-verified-at-not-string.json",
+      "name": "levels/level-2-verified-at-not-string",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Organization Verification (attestation shape)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (registry issuer key)"
+        }
+      ],
+      "expected": "REJECT[SHAPE_INVALID]",
+      "description": "Negative fixture: an ORGANIZATION_VERIFIED attestation whose verifiedAt is an array holding the timestamp string, not the string itself. Every other field is well-formed. A conforming verifier MUST reject at the shape stage: verifiedAt must be a string in YYYY-MM-DDTHH:MM:SSZ form. A verifier that tests the value against a pattern without checking its type can coerce the array to its only element, pass the shape check, and report SIGNATURE_INVALID instead."
     }
   ]
 }

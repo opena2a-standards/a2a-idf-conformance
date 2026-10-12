@@ -1,7 +1,7 @@
 {
   "$schema": "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
   "name": "levels/level-2-jcs-utf16-key-order",
-  "description": "Level 2 (ORGANIZATION_VERIFIED) with an annotations object whose keys are the RFC 8785 §3.2.3 property-sorting example, including U+1F600 (outside the Basic Multilingual Plane) and U+FB33. JCS sorts keys by UTF-16 code units, which puts U+1F600 (surrogates D83D DE00) before U+FB33; a code-point sort reverses them. The registry signed the UTF-16 order, so a conforming verifier ACCEPTs, and a verifier that sorts by code point reconstructs a different signing input and reports a spurious SIGNATURE_INVALID.",
+  "description": "Level 2 (ORGANIZATION_VERIFIED) with an annotations object whose ASCII property names sort differently under RFC 8785 §3.2.3 than under two common alternatives. JCS compares property names as UTF-16 code units, so 10 sorts before 9 (digits compare as characters, not as numbers) and B and Z sort before _ and a (upper case before lower case). The registry signed that order. A conforming verifier ACCEPTs; a verifier that sorts numerically, case-insensitively or by locale collation reconstructs a different signing input and reports a spurious SIGNATURE_INVALID. The non-ASCII half of the rule, code units against code points, is pinned by level-2-attestation-non-bmp-keys.",
   "spec": [
     {
       "id": "A2A-IDF",
@@ -58,15 +58,15 @@
                 "verifiedAt": "2026-02-17T00:00:00Z",
                 "expiresAt": "2027-02-17T00:00:00Z",
                 "annotations": {
-                  "1": "One",
-                  "€": "Euro Sign",
-                  "\r": "Carriage Return",
-                  "דּ": "Hebrew Letter Dalet With Dagesh",
-                  "😀": "Emoji: Grinning Face",
-                  "": "Control",
-                  "ö": "Latin Small Letter O With Diaeresis"
+                  "9": "Digit Nine",
+                  "10": "Digits One Zero",
+                  "a": "Latin Small Letter A",
+                  "B": "Latin Capital Letter B",
+                  "aa": "Latin Small Letter A, twice",
+                  "_": "Low Line",
+                  "Z": "Latin Capital Letter Z"
                 },
-                "signature": "4YMTZ0Ux1jvF4WojX5dVlSUIYOlnZsuKM66_5a-mLpY5XQJvR2np1uLgYle69eh1VBCts6a4Zlprt_o6NlWZDQ"
+                "signature": "uIVii89GZDIiEe7dXQeF5br8vW6DB4sh-kRkkbxto-uJLI7RJjf9w91b1S0eFNb8vOmqQh0bJNn62-JnzRgGBg"
               }
             ]
           }

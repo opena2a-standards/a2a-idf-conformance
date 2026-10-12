@@ -23,13 +23,14 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 import json
 import re
 import sys
 import unicodedata
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote
 
 # Content-Digest algorithms supported by this verifier (RFC 9530).
 # Fixtures may declare the expected digest with any of these prefixes;
@@ -433,23 +434,55 @@ def _ed25519_key_from_jwk(jwk: Any) -> Ed25519PublicKey | None:
     return Ed25519PublicKey.from_public_bytes(raw)
 
 
+# A surrogate code point. json.loads joins a well-formed escape pair such as
+# \ud83d\ude00 into one character, so a surrogate left in a str is a lone one.
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def _has_lone_surrogate(value: Any) -> bool:
+    """True when a string or property name anywhere in `value` holds a lone
+    surrogate, which has no UTF-8 encoding and which RFC 8785 §3.2.2.2 forbids."""
+    if isinstance(value, str):
+        return _SURROGATE.search(value) is not None
+    if isinstance(value, list):
+        return any(_has_lone_surrogate(v) for v in value)
+    if isinstance(value, dict):
+        return any(_has_lone_surrogate(k) or _has_lone_surrogate(v) for k, v in value.items())
+    return False
+
+
+# --- provider domain (WHATWG URL host) ---------------------------------------------
+
 # Label separators UTS #46 maps to "." (full stop, ideographic, fullwidth, halfwidth).
 _HOST_LABEL_SEPARATORS = re.compile(
     "[.\N{IDEOGRAPHIC FULL STOP}\N{FULLWIDTH FULL STOP}\N{HALFWIDTH IDEOGRAPHIC FULL STOP}]"
 )
 
+# Code points UTS #46 maps to nothing ("ignored"): the soft hyphen, zero width
+# space, word joiner, variation selectors and other invisible format characters.
+# This is the set the WHATWG URL parser of Node 26 removes from a domain; a
+# parser built on older UTS #46 data rejects some of the later additions instead.
+_UTS46_IGNORED = re.compile(
+    "[­͏ᅟᅠ឴឵᠋-᠏​⁠-⁤"
+    "⁪-⁯ㅤ︀-️﻿ﾠ"
+    "\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0100-\U000e01ef]"
+)
 
-def _ascii_host(host: str) -> str:
-    """Return a hostname in the ASCII form Node's WHATWG URL parser reports.
 
-    urlparse keeps an internationalized host in Unicode, while the WHATWG
-    parser returns its A-label (`bücher.example` -> `xn--bcher-kva.example`).
-    Non-ASCII labels are mapped as UTS #46 non-transitional processing maps
-    them in the common case (NFKC, lowercase; `ß` is kept), then
-    Punycode-encoded with the `xn--` prefix."""
+def _ascii_host(host: str) -> str | None:
+    """A domain in the ASCII form the WHATWG URL parser reports, or None.
+
+    An internationalized domain is reported as its A-label (`bücher.example`
+    -> `xn--bcher-kva.example`). Non-ASCII labels are mapped as UTS #46
+    non-transitional processing maps them in the common case (ignored code
+    points removed, NFKC, lowercase; `ß` is kept), then Punycode-encoded with
+    the `xn--` prefix. U+FFFD, which stands for an undecodable byte or a lone
+    surrogate, is disallowed."""
     if host.isascii():
         return host.lower()
-    mapped = unicodedata.normalize("NFKC", host).lower()
+    mapped = unicodedata.normalize("NFKC", _UTS46_IGNORED.sub("", host)).lower()
+    if "�" in mapped:
+        return None
     labels = []
     for label in _HOST_LABEL_SEPARATORS.split(mapped):
         if label.isascii():
@@ -459,26 +492,167 @@ def _ascii_host(host: str) -> str:
     return ".".join(labels)
 
 
-# Forbidden domain code points: the WHATWG URL parser refuses a host containing one.
+def _ipv4_number(part: str) -> int | None:
+    """One part of a WHATWG IPv4 address: decimal, `0x` hexadecimal or `0` octal."""
+    if part == "":
+        return None
+    radix = 10
+    if part[:2] in ("0x", "0X"):
+        part, radix = part[2:], 16
+    elif len(part) > 1 and part.startswith("0"):
+        part, radix = part[1:], 8
+    if any(ch not in "0123456789abcdef"[:radix] for ch in part.lower()):
+        return None
+    part = part.lstrip("0")
+    # More than 16 digits exceeds every limit below; Python also caps the length
+    # of a decimal string it converts.
+    return 256**4 if len(part) > 16 else int(part or "0", radix)
+
+
+def _ipv4_or_domain(host: str) -> str | None:
+    """`host` unchanged, unless its last label is a number: the WHATWG parser then
+    reads the whole host as an IPv4 address (`0x7f.0.0.1` and `127.1` are both
+    127.0.0.1). Returns the dotted-decimal form, or None when it is not valid."""
+    parts = host.split(".")
+    if parts[-1] == "" and len(parts) > 1:
+        parts.pop()
+    last = parts[-1]
+    all_digits = last != "" and all(ch in "0123456789" for ch in last)
+    if not all_digits and _ipv4_number(last) is None:
+        return host
+    numbers = [_ipv4_number(part) for part in parts]
+    if len(numbers) > 4 or None in numbers:
+        return None
+    if any(n > 255 for n in numbers[:-1]) or numbers[-1] >= 256 ** (5 - len(numbers)):
+        return None
+    address = numbers[-1] + sum(n * 256 ** (3 - i) for i, n in enumerate(numbers[:-1]))
+    return ".".join(str(address >> shift & 255) for shift in (24, 16, 8, 0))
+
+
+def _serialize_ipv6(address: ipaddress.IPv6Address) -> str:
+    """The WHATWG IPv6 serializer: eight lowercase hexadecimal pieces, the first
+    longest run of two or more zero pieces written as `::`."""
+    pieces = [int(address) >> shift & 0xFFFF for shift in range(112, -1, -16)]
+    start, length, i = 0, 1, 0
+    while i < 8:
+        j = i
+        while j < 8 and pieces[j] == 0:
+            j += 1
+        if j - i > length:
+            start, length = i, j - i
+        i = max(j, i + 1)
+    if length == 1:
+        return ":".join(f"{p:x}" for p in pieces)
+    head = ":".join(f"{p:x}" for p in pieces[:start])
+    tail = ":".join(f"{p:x}" for p in pieces[start + length :])
+    return f"{head}::{tail}"
+
+
+# Forbidden host and forbidden domain code points: the WHATWG URL parser refuses
+# a host containing one (the domain set adds C0 controls, "%" and DEL).
+_FORBIDDEN_HOST_CHARS = re.compile(r"[\x00\t\n\r #/:<>?@\[\\\]^|]")
 _FORBIDDEN_DOMAIN_CHARS = re.compile(r"[\x00-\x20#%/:<>?@\[\\\]^|\x7f]")
 
 
+def _parse_host(host: str, opaque: bool) -> str | None:
+    """The WHATWG host parser: the serialized host, or None on failure."""
+    if host.startswith("["):
+        if not host.endswith("]") or "%" in host:
+            return None
+        try:
+            return f"[{_serialize_ipv6(ipaddress.IPv6Address(host[1:-1]))}]"
+        except ValueError:
+            return None
+    if opaque:
+        # The host of a non-special scheme is kept as written, with C0 controls
+        # and everything above "~" percent-encoded.
+        if _FORBIDDEN_HOST_CHARS.search(host):
+            return None
+        return "".join(
+            ch if " " <= ch <= "~" else "".join(f"%{b:02X}" for b in ch.encode("utf-8"))
+            for ch in host
+        )
+    domain = _ascii_host(unquote(host))
+    if not domain or _FORBIDDEN_DOMAIN_CHARS.search(domain):
+        return None
+    return _ipv4_or_domain(domain)
+
+
+# Schemes the WHATWG URL Standard calls special: "\" is a path separator in them
+# and their host is a domain or an IP address.
+_SPECIAL_SCHEMES = frozenset({"ftp", "file", "http", "https", "ws", "wss"})
+_URL_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
+_C0_CONTROL_OR_SPACE = "".join(map(chr, range(0x21)))
+_AUTHORITY_END = re.compile(r"[/?#]")
+_SPECIAL_AUTHORITY_END = re.compile(r"[/\\?#]")
+_WINDOWS_DRIVE_LETTER = re.compile(r"[A-Za-z][:|]")
+
+
+def _valid_port(port: str) -> bool:
+    if port == "":
+        return True
+    return port.isascii() and port.isdigit() and len(port.lstrip("0")) <= 5 and int(port) <= 65535
+
+
 def _hostname_of(url: Any) -> str | None:
-    """The provider domain as Node's `new URL(url).hostname` reports it, or None
-    where that parser throws or finds no host."""
+    """The provider domain: the host of `url` as the WHATWG URL Standard derives
+    it, which is what Node's `new URL(url).hostname` reports. None where that
+    parser fails or finds no host.
+
+    Followed from the standard: the scheme and where its authority starts and
+    ends (in a special scheme `\\` ends it like `/`, and the slashes after the
+    colon are optional), credentials, the port (which must be valid), IPv6
+    literals, percent-decoding, forbidden code points, numeric IPv4 forms, the
+    `file:` host rules and the opaque host of a non-special scheme.
+
+    Approximated: the mapping of a non-ASCII domain (see `_ascii_host`). The
+    UTS #46 validity checks are not made, so a domain those checks refuse (a
+    disallowed code point other than U+FFFD, a joiner out of context, a Bidi
+    rule violation) is reported here as its Punycode form, and an `xn--` label
+    given in ASCII is returned as written."""
     if not isinstance(url, str):
         return None
-    try:
-        parsed = urlparse(url)
-        host = parsed.hostname
-    except ValueError:
+    # The parser reads a lone surrogate as U+FFFD, drops C0 controls and spaces
+    # around the URL, and removes every tab and newline inside it.
+    url = _SURROGATE.sub("�", url).strip(_C0_CONTROL_OR_SPACE)
+    url = url.translate({0x09: None, 0x0A: None, 0x0D: None})
+    scheme = _URL_SCHEME.match(url)
+    if scheme is None:
         return None
-    if not host:
+    name, rest = scheme.group()[:-1].lower(), url[scheme.end() :]
+    special = name in _SPECIAL_SCHEMES
+    if name == "file":
+        # Two slashes open a file: host, which has no credentials or port. An
+        # empty host, a Windows drive letter and "localhost" all mean no host.
+        if len(rest) < 2 or rest[0] not in "/\\" or rest[1] not in "/\\":
+            return None
+        host = _SPECIAL_AUTHORITY_END.split(rest[2:], maxsplit=1)[0]
+        if host == "" or _WINDOWS_DRIVE_LETTER.fullmatch(host):
+            return None
+        host = _parse_host(host, opaque=False)
+        return None if host == "localhost" else host
+    if special:
+        rest = rest.lstrip("/\\")
+    elif rest.startswith("//"):
+        rest = rest[2:]
+    else:
+        return None  # no authority (mailto:, urn:)
+    authority_end = _SPECIAL_AUTHORITY_END if special else _AUTHORITY_END
+    # Credentials end at the last "@"; the port starts at the first ":" outside
+    # square brackets.
+    hostport = authority_end.split(rest, maxsplit=1)[0].rpartition("@")[2]
+    host, port, in_brackets = hostport, "", False
+    for i, ch in enumerate(hostport):
+        if ch == "[":
+            in_brackets = True
+        elif ch == "]":
+            in_brackets = False
+        elif ch == ":" and not in_brackets:
+            host, port = hostport[:i], hostport[i + 1 :]
+            break
+    if host == "" or not _valid_port(port):
         return None
-    if parsed.netloc.rpartition("@")[2].startswith("["):
-        return f"[{host}]"  # IPv6 literal; the WHATWG hostname keeps the brackets
-    host = _ascii_host(unquote(host))
-    return None if _FORBIDDEN_DOMAIN_CHARS.search(host) else host
+    return _parse_host(host, opaque=not special)
 
 
 def _reject(category: str, reason: str) -> dict[str, Any]:
@@ -606,6 +780,9 @@ def evaluate_organization_verified(
     )
     if not shape_ok:
         return _reject("SHAPE_INVALID", "organization attestation is missing required fields")
+    # The attestation is signed over its JCS form, which a lone surrogate cannot enter.
+    if _has_lone_surrogate(att):
+        return _reject("SHAPE_INVALID", "organization attestation holds a lone surrogate")
     if subject.get("agentId") != p.get("agentId") or subject.get("kid") != pk["kid"]:
         return _reject(
             "SUBJECT_MISMATCH", "attestation subject does not bind to the declared agentId/kid"
@@ -672,6 +849,10 @@ def main() -> int:
     if not args:
         print("usage: python3 verify.py <fixture.json | directory> [...]", file=sys.stderr)
         return 2
+
+    # A reason line can quote a fixture string that holds a lone surrogate, which
+    # UTF-8 cannot encode: print it escaped instead of raising while reporting.
+    sys.stdout.reconfigure(errors="backslashreplace")
 
     paths = [p for arg in args for p in collect_fixtures(arg)]
     pass_count = 0

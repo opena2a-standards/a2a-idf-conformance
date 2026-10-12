@@ -60,7 +60,7 @@ SHA-256 of `MANIFEST.sha256`.
 
 | Cosigner | Commit SHA | Node verifier | Python verifier | Sigstore artifact | Date |
 |---|---|---|---|---|---|
-| opena2a-org (self-cosigned baseline, CI) | every `main` push (see CI self-cosignature) | `N pass, 0 fail` (N = fixture count at that commit; 30 at present) | `N pass, 0 fail` (N = fixture count at that commit; 30 at present) | Rekor entry per push (keyless CI signature) | 2026-07-04 onward |
+| opena2a-org (self-cosigned baseline, CI) | every `main` push (see CI self-cosignature) | `N pass, 0 fail` (N = fixture count at that commit; 41 at present) | `N pass, 0 fail` (N = fixture count at that commit; 41 at present) | Rekor entry per push (keyless CI signature) | 2026-07-04 onward |
 
 `python3 scripts/conformance_profile.py --check` (run in CI) fails when the
 "at present" count in the baseline row differs from the number of fixtures.

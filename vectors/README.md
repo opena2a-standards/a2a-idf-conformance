@@ -31,3 +31,8 @@ The Ed25519 keypair from RFC 8032 §7.1 Test 2. Two roles:
 Both keypairs are published in RFC 8032 itself and are for cross-implementation
 verification only. They MUST NOT be used to sign anything in any production
 deployment.
+
+A static secret scanner may report the `private` members of these files as
+hardcoded keys. Such a finding is expected: the values are the published
+RFC 8032 §7.1 test keys, and the generator re-derives every form of them from
+the two seeds on each run.

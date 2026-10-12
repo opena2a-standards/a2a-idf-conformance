@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,7 +20,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PARITY = HERE / "parity.py"
-FIXTURES_DIR = HERE.parent.parent / "fixtures"
+SCRIPTS_DIR = HERE.parent
+FIXTURES_DIR = SCRIPTS_DIR.parent / "fixtures"
 sys.path.insert(0, str(HERE))
 
 import parity  # noqa: E402
@@ -27,7 +29,10 @@ import parity  # noqa: E402
 # A stand-in implementation under test. It echoes each fixture's pinned
 # outcome in the reference output format. In `lie` mode it reports PASS for
 # every fixture but observes the wrong verdict on one, which the gate must
-# catch from the pinned outcome and from the reference verifiers.
+# catch from the pinned outcome and from the reference verifiers. In
+# `wrong-category` mode it rejects one negative fixture, as pinned, but for
+# another reason. In `my-fixtures` mode it prints each path under a directory
+# whose name only ends in `fixtures`.
 STUB = r'''
 import json
 import sys
@@ -42,9 +47,25 @@ for path in sorted(root.rglob("*.json")):
     observed = f"REJECT[{category}]" if category else expected.get("verifyResult", "ACCEPT")
     if mode == "lie" and path.name == "level-0-self-asserted.json":
         observed = "REJECT[SHAPE_INVALID]"
-    print(f"PASS  {path}")
+    if mode == "wrong-category" and path.name == "level-0-agent-id-malformed.json":
+        observed = "REJECT[SIGNATURE_INVALID]"
+    shown = f"my-fixtures/{path.relative_to(root).as_posix()}" if mode == "my-fixtures" else path
+    print(f"PASS  {shown}")
     print(f"      observed: {observed}")
 print("summary: stub")
+'''
+
+# Parses one 400,000-character block line. A pattern that retries every split
+# of the run of spaces needs minutes for it; splitting the line once does not.
+LONG_LINE_PROBE = r'''
+import sys
+
+sys.path.insert(0, sys.argv[1])
+import parity
+
+path = "x" + " " * 400000 + "y"
+records = parity.parse_output(f"PASS  {path}   \n      observed: ACCEPT\n")
+print(records == {path: {"gate": "PASS", "verdict": "ACCEPT", "category": None}})
 '''
 
 
@@ -77,10 +98,100 @@ class ParseTests(unittest.TestCase):
             {"levels/x.json": {"gate": "PASS", "verdict": "REJECT", "category": "SHAPE_INVALID"}},
         )
 
+    def test_fixture_key_needs_a_directory_named_fixtures(self):
+        # The key starts after the last `fixtures` path component. A directory
+        # whose name only ends in `fixtures` is not one, so the gate cannot
+        # tell which fixture the path names and reports a set mismatch.
+        self.assertEqual(parity.fixture_key("/a/fixtures/b/fixtures/levels/x.json"), "levels/x.json")
+        self.assertEqual(parity.fixture_key("my-fixtures/levels/x.json"), "x.json")
+
+    def test_error_block_is_its_own_gate_status(self):
+        records = parity.parse_output(
+            "ERROR /repo/fixtures/levels/x.json\n"
+            "      value type outside the fixture JCS domain: int\n"
+            "PASS  /repo/fixtures/levels/y.json\n"
+            "      observed: ACCEPT\n"
+        )
+        self.assertEqual(
+            records,
+            {
+                "levels/x.json": {"gate": "ERROR", "verdict": None, "category": None},
+                "levels/y.json": {"gate": "PASS", "verdict": "ACCEPT", "category": None},
+            },
+        )
+
+    def test_block_line_must_start_with_the_gate_word(self):
+        for line in ("  PASS  fixtures/levels/x.json", "PASSED fixtures/levels/x.json", "PASS", "PASS   "):
+            with self.subTest(line=line):
+                self.assertEqual(parity.parse_output(line + "\n"), {})
+
+    def test_long_block_line_parses_in_linear_time(self):
+        proc = subprocess.run(
+            [sys.executable, "-c", LONG_LINE_PROBE, str(HERE)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(proc.stdout.strip(), "True", proc.stderr)
+
     def test_verifier_spec_is_split_without_a_shell(self):
         self.assertEqual(
             parity.parse_verifier_spec("impl=./run 'a b' --flag"),
             ("impl", ["./run", "a b", "--flag"]),
+        )
+
+
+class PinnedOutcomeTests(unittest.TestCase):
+    def write(self, tmp: str, fixture: object) -> Path:
+        path = Path(tmp) / "fixture.json"
+        path.write_text(json.dumps(fixture))
+        return path
+
+    def test_reject_category_and_default_verdict_are_read_from_expected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(
+                parity.pinned_outcome(self.write(tmp, {"expected": {"rejectCategory": "EXPIRED"}})),
+                {"verdict": "REJECT", "category": "EXPIRED"},
+            )
+            self.assertEqual(
+                parity.pinned_outcome(self.write(tmp, {"expected": {}})),
+                {"verdict": "ACCEPT", "category": None},
+            )
+            self.assertIsNone(parity.pinned_outcome(self.write(tmp, {"name": "no expected block"})))
+
+    def test_expected_that_is_not_an_object_is_refused_by_name(self):
+        for value, shown in (([], "an array"), ("ACCEPT", "a string"), (None, "null"), (1, "a number")):
+            with self.subTest(expected=value), tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaises(parity.UnusableExpectedBlock) as raised:
+                    parity.pinned_outcome(self.write(tmp, {"expected": value}))
+                self.assertEqual(
+                    str(raised.exception),
+                    f"`expected` is {shown}, not an object, so the fixture pins no outcome",
+                )
+
+    def test_gate_reports_a_non_object_expected_block_as_a_divergence(self):
+        # Runs a copy of the suite, so the extra fixture never touches fixtures/.
+        with tempfile.TemporaryDirectory() as tmp:
+            suite = Path(tmp) / "suite"
+            shutil.copytree(
+                SCRIPTS_DIR, suite / "scripts", ignore=shutil.ignore_patterns("__pycache__")
+            )
+            shutil.copytree(FIXTURES_DIR, suite / "fixtures")
+            fixture = json.loads((FIXTURES_DIR / "levels" / "level-0-self-asserted.json").read_text())
+            fixture["expected"] = []
+            (suite / "fixtures" / "levels" / "expected-not-object.json").write_text(json.dumps(fixture))
+            proc = subprocess.run(
+                [sys.executable, str(suite / "scripts" / "parity" / "parity.py")],
+                cwd=suite,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+        self.assertIn(
+            "  - levels/expected-not-object.json: `expected` is an array, not an object, "
+            "so the fixture pins no outcome\n",
+            proc.stdout,
         )
 
 
@@ -134,6 +245,24 @@ class VerifierOptionTests(unittest.TestCase):
         self.assertTrue(
             any(d.startswith(f"{fx}: verdict divergence") for d in report["divergences"])
         )
+
+    def test_wrong_reject_category_fails_against_the_pinned_category(self):
+        proc, report = run_parity("--verifier", self.stub_spec("wrong-category"), cwd=self.tmp)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        fx = "levels/level-0-agent-id-malformed.json"
+        self.assertEqual(report["pinned"][fx], "REJECT[SHAPE_INVALID]")
+        self.assertEqual(report["fixtures"][fx]["stub"]["verdict"], "REJECT")
+        self.assertIn(
+            f"{fx}: stub observed REJECT[SIGNATURE_INVALID], pinned outcome is REJECT[SHAPE_INVALID]",
+            report["divergences"],
+        )
+
+    def test_path_under_a_directory_that_only_ends_in_fixtures_is_a_set_mismatch(self):
+        proc, report = run_parity("--verifier", self.stub_spec("my-fixtures"), cwd=self.tmp)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        mismatch = [d for d in report["divergences"] if d.startswith("stub fixture set mismatch")]
+        self.assertEqual(len(mismatch), 1, report["divergences"])
+        self.assertIn("missing=['composition/", mismatch[0])
 
     def test_command_that_cannot_start_is_a_divergence(self):
         missing = str(self.tmp / "no-such-verifier")
