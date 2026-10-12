@@ -144,7 +144,7 @@ Declare a byte-match relationship with another conformance suite's published vec
 }
 ```
 
-When `byteIdentical: true` and the signature verifies, the verifier base64-encodes the signature bytes it parsed from `expected.signature` (the bytes it just verified) and asserts that they match `expectedSignatureBase64` exactly; otherwise it rejects with `CROSS_SUITE_MISMATCH`. It never reads `expected.signatureBase64` for this check. `byteIdentical: true` without a non-empty `expectedSignatureBase64` is a malformed fixture: both verifiers report it as `FAIL` at stage `cross-suite-equivalence` rather than skipping the comparison. This is the core interop claim of A2A-IDF §6: dual-shape `keyid` resolution does not change the signed bytes.
+When `byteIdentical: true` and the signature verifies, the verifier base64-encodes the signature bytes it parsed from `expected.signature` (the bytes it just verified) and asserts that they match `expectedSignatureBase64` exactly; otherwise it rejects with `CROSS_SUITE_MISMATCH`. It never reads `expected.signatureBase64` for this check. `byteIdentical: true` without an `expectedSignatureBase64` that is a non-empty string is a malformed fixture: both verifiers report it as `FAIL` at stage `cross-suite-equivalence` rather than skipping the comparison. A `crossSuiteEquivalence` or `crossSuiteEquivalence.envoys` value that is present but is not a JSON object (a string, an array, `null`) is malformed too: both verifiers report it as `FAIL` at stage `schema`, before any other check, rather than reading it as an absent block. This is the core interop claim of A2A-IDF §6: dual-shape `keyid` resolution does not change the signed bytes.
 
 ## Reproducibility checklist
 

@@ -1,5 +1,6 @@
-// Regression tests for `scripts/conformance_profile.py --check`, run on a
-// scratch copy of the files it reads so the committed tree is never modified.
+// Regression tests for `scripts/conformance_profile.py` (`--check`, and
+// regeneration where a test says so), run on a scratch copy of the files it
+// reads so the committed tree is never modified.
 //
 // Usage:  node --test scripts/test/*.test.mjs
 
@@ -22,22 +23,30 @@ function scratchCopy(t) {
   return root;
 }
 
-function check(root) {
-  return spawnSync("python3", [join(root, "scripts", "conformance_profile.py"), "--check"], {
+function run(root, ...args) {
+  return spawnSync("python3", [join(root, "scripts", "conformance_profile.py"), ...args], {
     encoding: "utf8",
   });
+}
+
+function check(root) {
+  return run(root, "--check");
 }
 
 function fixtureCount(root) {
   return JSON.parse(readFileSync(join(root, "conformance.json"), "utf8")).requirements.length;
 }
 
-function editCosigners(root, edit) {
-  const path = join(root, "COSIGNERS.md");
+function editFile(root, rel, edit) {
+  const path = join(root, rel);
   const before = readFileSync(path, "utf8");
   const after = edit(before);
-  assert.notEqual(after, before, "the edit must change COSIGNERS.md");
+  assert.notEqual(after, before, `the edit must change ${rel}`);
   writeFileSync(path, after);
+}
+
+function editCosigners(root, edit) {
+  editFile(root, "COSIGNERS.md", edit);
 }
 
 test("--check passes on an unmodified copy", (t) => {
@@ -62,3 +71,38 @@ test("--check fails when the COSIGNERS.md baseline row does not state the count"
   assert.equal(result.status, 1, result.stdout + result.stderr);
   assert.match(result.stdout, /^COSIGNERS\.md:\d+ /m);
 });
+
+// The edited sentence already names the wire signature and delegation layers,
+// which fixtures compose, so the one line reported is the layer that none does.
+test("--check fails when README.md says the suite composes with a layer no fixture composes", (t) => {
+  const root = scratchCopy(t);
+  editFile(root, "README.md", (text) =>
+    text.replace("composes with ", "composes with the identity-claim envelope layer (#1786 CTEF) and "),
+  );
+  const result = check(root);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  const lines = result.stdout.trim().split("\n");
+  assert.equal(lines.length, 1, result.stdout);
+  assert.match(
+    lines[0],
+    /^README\.md:\d+ says the suite composes with the identity claims \(CTEF\) layer \(a2aproject\/A2A#1786\), but no fixture /,
+  );
+});
+
+for (const [label, args] of [["--check", ["--check"]], ["regeneration", []]]) {
+  test(`${label} names a fixture without a required field in one line`, (t) => {
+    const root = scratchCopy(t);
+    const rel = "fixtures/composition/hippo-rfc9421/signature-alone-tag.json";
+    editFile(root, rel, (text) => {
+      const fixture = JSON.parse(text);
+      delete fixture.spec;
+      return JSON.stringify(fixture, null, 2) + "\n";
+    });
+    const profile = readFileSync(join(root, "conformance.json"), "utf8");
+    const result = run(root, ...args);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.equal(result.stderr, "");
+    assert.equal(result.stdout, `${rel}: missing required field "spec"\n`);
+    assert.equal(readFileSync(join(root, "conformance.json"), "utf8"), profile);
+  });
+}
