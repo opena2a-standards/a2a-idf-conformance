@@ -242,8 +242,26 @@ def gate_verdict(
 # --- composition fixtures (RFC 9421 wire layer + §6 keyid resolution) -------------
 
 
+def _composition_schema_error(fixture: dict[str, Any]) -> str | None:
+    """The optional crossSuiteEquivalence block, when present, must be a JSON
+    object, and so must its `envoys` member. Same rule and wording as
+    verify.mjs, so a malformed block is neither skipped nor raised on."""
+    if "crossSuiteEquivalence" not in fixture:
+        return None
+    cse = fixture["crossSuiteEquivalence"]
+    if not isinstance(cse, dict):
+        return "crossSuiteEquivalence is present but is not a JSON object"
+    if "envoys" in cse and not isinstance(cse["envoys"], dict):
+        return "crossSuiteEquivalence.envoys is present but is not a JSON object"
+    return None
+
+
 def verify_composition_fixture(fixture: dict[str, Any]) -> tuple[bool, str | None, list[str]]:
     expected = fixture.get("expected", {})
+
+    schema_error = _composition_schema_error(fixture)
+    if schema_error is not None:
+        return False, None, ["stage:  schema", f"reason: {schema_error}"]
 
     # Recompute Content-Digest. Algorithm is taken from the prefix of
     # expected.contentDigest (RFC 9530).
@@ -308,12 +326,12 @@ def verify_composition_fixture(fixture: dict[str, Any]) -> tuple[bool, str | Non
 
     # A byte-identity claim is only checkable against a pinned value, so a claim
     # without one is a malformed fixture, never a skipped comparison.
-    cse = (fixture.get("crossSuiteEquivalence") or {}).get("envoys") or {}
+    cse = fixture.get("crossSuiteEquivalence", {}).get("envoys", {})
     if cse.get("byteIdentical") is True and not _is_nonempty_str(cse.get("expectedSignatureBase64")):
         return False, None, [
             "stage:  cross-suite-equivalence",
             "reason: crossSuiteEquivalence.envoys.byteIdentical is true but "
-            "expectedSignatureBase64 is missing or empty",
+            "expectedSignatureBase64 is missing, empty or not a string",
         ]
 
     # Verify Ed25519.

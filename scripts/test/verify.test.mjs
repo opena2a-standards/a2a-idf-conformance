@@ -33,20 +33,54 @@ function runVerifier([command, ...args], path) {
   return spawnSync(command, [...args, path], { encoding: "utf8" });
 }
 
-for (const [label, pin] of [["no", undefined], ["an empty", ""]]) {
+// A copy of the cross-suite-mismatch fixture that pins ACCEPT, so a verifier
+// that skips the crossSuiteEquivalence block passes it.
+function writeAcceptVariant(t, mutate) {
+  return writeVariant(t, "fixtures/composition/aim-did-rfc9421/cross-suite-mismatch.json", (fx) => {
+    mutate(fx);
+    fx.expected.verifyResult = "ACCEPT";
+    delete fx.expected.rejectCategory;
+  });
+}
+
+for (const [label, pin] of [["no", undefined], ["an empty", ""], ["a non-string", 5]]) {
   test(`byteIdentical: true with ${label} expectedSignatureBase64 is a fixture error`, (t) => {
-    const path = writeVariant(t, "fixtures/composition/aim-did-rfc9421/cross-suite-mismatch.json", (fx) => {
+    const path = writeAcceptVariant(t, (fx) => {
       if (pin === undefined) delete fx.crossSuiteEquivalence.envoys.expectedSignatureBase64;
       else fx.crossSuiteEquivalence.envoys.expectedSignatureBase64 = pin;
-      fx.expected.verifyResult = "ACCEPT";
-      delete fx.expected.rejectCategory;
     });
     for (const [name, argv] of Object.entries(VERIFIERS)) {
       const result = runVerifier(argv, path);
       assert.equal(result.status, 1, `${name}: ${result.stdout}${result.stderr}`);
       assert.match(result.stdout, /^FAIL {2}/m, name);
       assert.match(result.stdout, /stage: +cross-suite-equivalence/, name);
+      assert.match(result.stdout, /reason: .*expectedSignatureBase64 is missing, empty or not a string$/m, name);
       assert.doesNotMatch(result.stdout, /observed: ACCEPT/, name);
     }
+  });
+}
+
+// A block that is present but is not a JSON object must not be read as an
+// absent one. The two verifiers print the same lines; only the path on the
+// first line differs, because each resolves it in its own way.
+for (const [label, field, mutate] of [
+  ["a string envoys", "crossSuiteEquivalence.envoys", (fx) => (fx.crossSuiteEquivalence.envoys = "not-an-object")],
+  ["an array envoys", "crossSuiteEquivalence.envoys", (fx) => (fx.crossSuiteEquivalence.envoys = [{ byteIdentical: true }])],
+  ["a null envoys", "crossSuiteEquivalence.envoys", (fx) => (fx.crossSuiteEquivalence.envoys = null)],
+  ["a string crossSuiteEquivalence", "crossSuiteEquivalence", (fx) => (fx.crossSuiteEquivalence = "not-an-object")],
+]) {
+  test(`${label} fails at the schema stage in both verifiers`, (t) => {
+    const path = writeAcceptVariant(t, mutate);
+    const outcomes = {};
+    for (const [name, argv] of Object.entries(VERIFIERS)) {
+      const result = runVerifier(argv, path);
+      assert.equal(result.status, 1, `${name}: ${result.stdout}${result.stderr}`);
+      outcomes[name] = result.stdout.replace(/^(\w+) .*$/m, "$1");
+    }
+    assert.equal(
+      outcomes.node,
+      ["FAIL", "      stage:  schema", `      reason: ${field} is present but is not a JSON object`, "summary: 0 pass, 1 fail (1 fixtures)", ""].join("\n"),
+    );
+    assert.equal(outcomes.python, outcomes.node);
   });
 }

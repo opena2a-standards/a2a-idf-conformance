@@ -71,6 +71,52 @@ test("checks the script path of a command chained after &&, ;, || or |", (t) => 
   assert.match(result.stdout, /^summary: 5 paths checked, 3 broken$/m);
 });
 
+test("follows cd -- <dir> and a cd inside a subshell, until the subshell closes", (t) => {
+  const root = scratchRepo(t, {
+    "fixtures/levels/README.md": "# Levels\n",
+    "README.md": [
+      "# Demo",
+      "",
+      "```bash",
+      "cd -- fixtures/levels && node ../../scripts/check-doc-links.mjs",
+      "cd -- fixtures/levels && node ../../scripts/nope.mjs",
+      "(cd fixtures/levels && node ../../scripts/check-doc-links.mjs)",
+      "(cd fixtures/levels && node ../../scripts/gone.mjs)",
+      "$ ( cd fixtures/levels && node ../../scripts/check-doc-links.mjs ) && node scripts/check-doc-links.mjs",
+      "OUT=$(cd fixtures/levels && node ../../scripts/check-doc-links.mjs) && node scripts/lost.mjs",
+      "```",
+      "",
+    ].join("\n"),
+  });
+  const result = runCheck(root);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stdout, /^FAIL {2}README\.md:5 {2}command script \.\.\/\.\.\/scripts\/nope\.mjs \(not found from fixtures\/levels\/\)$/m);
+  assert.match(result.stdout, /^FAIL {2}README\.md:7 {2}command script \.\.\/\.\.\/scripts\/gone\.mjs \(not found from fixtures\/levels\/\)$/m);
+  assert.match(result.stdout, /^FAIL {2}README\.md:9 {2}command script scripts\/lost\.mjs \(not found from the repo root\)$/m);
+  assert.match(result.stdout, /^summary: 8 paths checked, 3 broken$/m);
+});
+
+test("does not guess the directory of a cd it cannot resolve", (t) => {
+  const root = scratchRepo(t, {
+    "fixtures/levels/README.md": "# Levels\n",
+    "README.md": [
+      "# Demo",
+      "",
+      "```bash",
+      "cd -P fixtures/levels && node ../../scripts/check-doc-links.mjs",
+      'cd "$(dirname "$0")" && node ../scripts/check-doc-links.mjs',
+      "cd -- && node scripts/elsewhere.mjs",
+      '(cd "$DIR" && node elsewhere.mjs); node scripts/nope.mjs',
+      "```",
+      "",
+    ].join("\n"),
+  });
+  const result = runCheck(root);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stdout, /^FAIL {2}README\.md:7 {2}command script scripts\/nope\.mjs /m);
+  assert.match(result.stdout, /^summary: 1 paths checked, 1 broken$/m);
+});
+
 test("scans a long line of link-like text in linear time", (t) => {
   const root = scratchRepo(t, {
     "README.md": ["# Demo", "", "[a](".repeat(40_000), "", "[".repeat(80_000), "", "[ok](./README.md)", ""].join("\n"),

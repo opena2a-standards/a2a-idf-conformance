@@ -7,7 +7,9 @@
 //     blocks, including commands chained after `&&`, `||`, `;` or `|`. The script
 //     must exist relative to the Markdown file's directory or the repo root (the
 //     two working directories a reader can be expected to run them from), moved
-//     by any `cd <dir>` earlier on the same line;
+//     by any `cd <dir>` or `cd -- <dir>` earlier on the same line. A `cd` inside
+//     a subshell, `(cd <dir> && node ...)`, moves only the commands up to the
+//     closing parenthesis;
 //   - the files a `cosign sign-blob` command writes, in a fenced code block that tells
 //     the reader to commit them under `.sigstore/<org>/`, which must not be ignored by
 //     git at that location (`<placeholder>` segments are checked as `example-org`).
@@ -27,9 +29,13 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // past the next bracket and a long line is scanned in linear time.
 const INLINE_LINK = /\[[^[\]]*\]\(\s*<?([^)\s>[\]]+)>?(?:\s+"[^"]*")?\s*\)/g;
 const REF_DEFINITION = /^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s|$)/;
-const COMMAND_SEPARATOR = /&&|\|\||[;|]/;
+// A command can start after `&&`, `;` or `|`, and after the `(` that opens a
+// subshell or the `)` that closes one. The group keeps each boundary in the
+// split, so the parentheses can be followed. `||` needs no alternative of its
+// own: `|` splits it into an empty piece, which matches no command.
+const COMMAND_BOUNDARY = /(&&|[;|()])/;
 const SCRIPT_COMMAND = /^(?:\$\s+)?(?:node|python3?)\s+(\S+\.(?:mjs|cjs|js|py))(?:\s|$)/;
-const CD_COMMAND = /^(?:\$\s+)?cd(?:\s+(\S+))?\s*$/;
+const CD_COMMAND = /^(?:\$\s+)?cd(?:\s+(.*))?$/s;
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
 const SIGSTORE_DIR = /(?:^|[\s`'"(])(\.sigstore\/\S*?\/)(?=$|[\s`'")])/;
 const COSIGN_SIGN = /^\s*(?:\$\s+)?cosign\s+sign-blob\s/;
@@ -119,6 +125,16 @@ function describeBase(base) {
   return base === ROOT ? "the repo root" : `${relative(ROOT, base)}/`;
 }
 
+// The directory a `cd` moves to (`cd <dir>`, `cd -- <dir>`), or null when this
+// check cannot resolve it: no operand or more than one, an option other than a
+// leading `--`, or a target that needs the shell (`cd`, `cd ~`, `cd "$DIR"`,
+// `cd -`, `cd -P <dir>`).
+function cdTarget(args = "") {
+  const operands = args.split(/\s+/).filter(Boolean);
+  if (operands[0] === "--") operands.shift();
+  return operands.length === 1 && !/^[~-]|[$"'`]/.test(operands[0]) ? operands[0] : null;
+}
+
 function checkFile(relPath) {
   const abs = join(ROOT, relPath);
   const dir = dirname(abs);
@@ -149,14 +165,25 @@ function checkFile(relPath) {
       if (fence !== null) {
         block.push({ text: line, where });
         let bases = [...new Set([dir, ROOT])];
-        for (const segment of line.split(COMMAND_SEPARATOR)) {
-          const part = segment.trim();
+        // The bases to return to as each open subshell closes: a `cd` inside
+        // `( ... )` or `$( ... )` moves the commands up to the closing `)` only.
+        const outer = [];
+        for (const piece of line.split(COMMAND_BOUNDARY)) {
+          if (piece === "(") {
+            outer.push(bases);
+            continue;
+          }
+          if (piece === ")") {
+            if (outer.length > 0) bases = outer.pop();
+            continue;
+          }
+          const part = piece.trim();
           const cd = part.match(CD_COMMAND);
           if (cd) {
-            // A target this check cannot resolve (`cd`, `cd ~`, `cd "$DIR"`, `cd -`)
-            // ends the checks for the rest of the line instead of guessing.
-            const target = cd[1];
-            bases = target && !/^[~-]|[$"'`]/.test(target) ? [...new Set(bases.map((b) => resolve(b, target)))] : [];
+            // A target this check cannot resolve ends the checks for the rest of
+            // the line, or of the subshell it is in, instead of guessing.
+            const target = cdTarget(cd[1]);
+            bases = target === null ? [] : [...new Set(bases.map((b) => resolve(b, target)))];
             continue;
           }
           const cmd = part.match(SCRIPT_COMMAND);

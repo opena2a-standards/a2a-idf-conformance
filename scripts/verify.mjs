@@ -210,8 +210,30 @@ function gateVerdict(path, expected, verdict, category) {
 
 // --- composition fixtures (RFC 9421 wire layer + §6 keyid resolution) ----------
 
+function isJsonObject(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+// The optional crossSuiteEquivalence block, when present, must be a JSON object,
+// and so must its `envoys` member. Reading a field of a string, array or null
+// yields nothing, so a malformed block would otherwise be skipped as if absent.
+function compositionSchemaError(fixture) {
+  const cse = fixture.crossSuiteEquivalence;
+  if (cse === undefined) return null;
+  if (!isJsonObject(cse)) return "crossSuiteEquivalence is present but is not a JSON object";
+  if (cse.envoys !== undefined && !isJsonObject(cse.envoys)) {
+    return "crossSuiteEquivalence.envoys is present but is not a JSON object";
+  }
+  return null;
+}
+
 function verifyCompositionFixture(fixture, path) {
   const expected = fixture.expected;
+
+  const schemaError = compositionSchemaError(fixture);
+  if (schemaError !== null) {
+    return { path, ok: false, stage: "schema", reason: schemaError };
+  }
 
   // Recompute Content-Digest from body — confirms the fixture is internally consistent.
   // Algorithm is taken from the prefix of expected.contentDigest (RFC 9530).
@@ -303,7 +325,8 @@ function verifyCompositionFixture(fixture, path) {
       path,
       ok: false,
       stage: "cross-suite-equivalence",
-      reason: "crossSuiteEquivalence.envoys.byteIdentical is true but expectedSignatureBase64 is missing or empty",
+      reason:
+        "crossSuiteEquivalence.envoys.byteIdentical is true but expectedSignatureBase64 is missing, empty or not a string",
     };
   }
 

@@ -179,12 +179,29 @@ def fixture_type(rel: Path) -> str:
     return {"composition": "composition", "levels": "level"}.get(top, top)
 
 
+# Every requirement entry is derived from these fixture fields, so a fixture
+# without one cannot be profiled.
+REQUIRED_FIXTURE_FIELDS = ("name", "description", "spec", "expected")
+
+
+class FixtureError(Exception):
+    """A fixture lacks a field the profile is derived from; one line per fixture."""
+
+
 def build() -> dict:
     requirements = []
+    errors = []
     fixtures_root = REPO_ROOT / "fixtures"
     for path in sorted(fixtures_root.rglob("*.json")):
         rel = path.relative_to(fixtures_root)
         fx = json.loads(path.read_text())
+        missing = [f'"{field}"' for field in REQUIRED_FIXTURE_FIELDS if field not in fx]
+        if missing:
+            errors.append(
+                f"fixtures/{rel.as_posix()}: missing required field{'s' if len(missing) > 1 else ''} "
+                + ", ".join(missing)
+            )
+            continue
         expected = fx["expected"]
         outcome = expected.get("verifyResult", "ACCEPT")
         if expected.get("rejectCategory"):
@@ -200,13 +217,19 @@ def build() -> dict:
                 "description": fx["description"],
             }
         )
+    if errors:
+        raise FixtureError("\n".join(errors))
     profile = dict(SUITE)
     profile["requirements"] = requirements
     return profile
 
 
 def main() -> int:
-    profile = build()
+    try:
+        profile = build()
+    except FixtureError as err:
+        print(err)
+        return 1
     rendered = json.dumps(profile, indent=2, ensure_ascii=False) + "\n"
     if "--check" in sys.argv:
         if not OUT.exists():
