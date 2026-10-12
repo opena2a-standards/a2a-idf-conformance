@@ -1,35 +1,47 @@
 #!/usr/bin/env python3
 """Cross-implementation parity gate.
 
-Runs every reference verifier in this repository over the byte-pinned
-fixture set and asserts that all implementations agree per fixture on:
+Runs every reference verifier in this repository, plus any implementation
+named with `--verifier`, over the byte-pinned fixture set and asserts that all
+implementations agree per fixture on:
 
   1. gate status   -- PASS/FAIL against the fixture's pinned `expected` block,
                       or ERROR when the verifier raised instead of deciding
   2. verdict       -- ACCEPT vs REJECT
   3. reject category (when REJECT)
 
-The verifiers already self-check against each fixture's `expected` block, so
-a green run of each verifier proves agreement with the pinned oracle. This
-script makes the cross-implementation agreement explicit and machine-readable:
-it fails if any verifier skips a fixture the other saw, disagrees on verdict
-or category, or exits non-zero.
+and that every implementation's observed verdict (and reject category, when
+pinned) matches the outcome pinned in the fixture itself. The pinned check
+reads the fixture directly, so it does not rely on an implementation's own
+PASS/FAIL report. The gate fails if any verifier skips a fixture the others
+saw, disagrees on gate, verdict or category, departs from the pinned outcome,
+or exits non-zero.
 
 Usage:
     python3 scripts/parity/parity.py [--json parity-report.json]
+                                     [--verifier NAME=COMMAND ...]
 
-Exit codes: 0 = all implementations agree, 1 = divergence or verifier error.
+`--verifier` adds an implementation under test. COMMAND is split with
+shell-style quoting (no shell is invoked), run from the current directory, and
+given the absolute path of the fixtures/ directory as its last argument. It
+must print the same per-fixture blocks as the reference verifiers; the
+interface is documented in scripts/README.md.
+
+Exit codes: 0 = all implementations agree, 1 = divergence or verifier error,
+2 = usage error.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+FIXTURES_DIR = REPO_ROOT / "fixtures"
 
 VERIFIERS = {
     "node": {
@@ -45,31 +57,49 @@ VERIFIERS = {
 # `PASS  <path>`, `FAIL  <path>` or `ERROR <path>` opens a per-fixture block.
 # ERROR (the verifier raised instead of reaching a verdict) is recorded as its
 # own gate status, so it is reported as a divergence, never as a missing fixture.
-BLOCK_RE = re.compile(r"^(PASS|FAIL|ERROR)\s+(\S+)")
+# The path runs to the end of the line, so a checkout path with spaces parses.
+BLOCK_RE = re.compile(r"^(PASS|FAIL|ERROR)\s+(.+?)\s*$")
 # `observed: ACCEPT` or `observed: REJECT[CATEGORY]`
 OBSERVED_RE = re.compile(r"^\s*observed:\s+(ACCEPT|REJECT\[([A-Z_]+)\])")
+VERIFIER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def fixture_key(path_str: str) -> str:
     """Stable per-fixture key: the path relative to the fixtures/ root.
 
-    Verifiers print absolute paths; fixtures are nested (composition/…,
-    levels/…), so basenames alone would be ambiguous."""
+    Verifiers print absolute paths or paths relative to the repository root;
+    fixtures are nested (composition/…, levels/…), so basenames alone would
+    be ambiguous."""
     marker = "/fixtures/"
-    idx = path_str.rfind(marker)
+    rooted = path_str if path_str.startswith("/") else "/" + path_str
+    idx = rooted.rfind(marker)
     if idx >= 0:
-        return path_str[idx + len(marker):]
+        return rooted[idx + len(marker):]
     return Path(path_str).name
 
 
-def run_verifier(name: str, spec: dict) -> tuple[int, dict[str, dict]]:
-    """Run one verifier; return (exit_code, {fixture_key: record})."""
-    proc = subprocess.run(
-        spec["cmd"], cwd=spec["cwd"], capture_output=True, text=True
-    )
+def parse_verifier_spec(spec: str) -> tuple[str, list[str]]:
+    """argparse type for `--verifier NAME=COMMAND`."""
+    name, sep, command = spec.partition("=")
+    name = name.strip()
+    if not sep or not VERIFIER_NAME_RE.match(name):
+        raise argparse.ArgumentTypeError(
+            f"expected NAME=COMMAND with NAME of letters, digits, '.', '_' or '-', got {spec!r}"
+        )
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"cannot parse COMMAND in {spec!r}: {exc}") from exc
+    if not argv:
+        raise argparse.ArgumentTypeError(f"empty COMMAND in {spec!r}")
+    return name, argv
+
+
+def parse_output(stdout: str) -> dict[str, dict]:
+    """Parse verifier stdout into {fixture_key: {gate, verdict, category}}."""
     records: dict[str, dict] = {}
     current: str | None = None
-    for line in proc.stdout.splitlines():
+    for line in stdout.splitlines():
         m = BLOCK_RE.match(line)
         if m:
             current = fixture_key(m.group(2))
@@ -84,28 +114,81 @@ def run_verifier(name: str, spec: dict) -> tuple[int, dict[str, dict]]:
             else:
                 records[current]["verdict"] = "REJECT"
                 records[current]["category"] = om.group(2)
+    return records
+
+
+def run_verifier(name: str, spec: dict) -> tuple[int, dict[str, dict]]:
+    """Run one verifier; return (exit_code, {fixture_key: record})."""
+    try:
+        proc = subprocess.run(
+            spec["cmd"], cwd=spec["cwd"], capture_output=True, text=True
+        )
+    except OSError as exc:
+        sys.stderr.write(f"[parity] {name} verifier could not start: {exc}\n")
+        return 127, {}
+    records = parse_output(proc.stdout)
     if proc.returncode != 0:
         sys.stderr.write(f"[parity] {name} verifier exited {proc.returncode}\n")
         sys.stderr.write(proc.stdout[-2000:] + proc.stderr[-2000:] + "\n")
     return proc.returncode, records
 
 
+def pinned_outcome(path: Path) -> dict | None:
+    """The fixture's pinned outcome, read the same way conformance_profile.py
+    derives it. None when the fixture is not readable JSON with an `expected`
+    block; the verifiers report that fixture as ERROR."""
+    try:
+        expected = json.loads(path.read_text())["expected"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    category = expected.get("rejectCategory")
+    verdict = "REJECT" if category else expected.get("verifyResult", "ACCEPT")
+    return {"verdict": verdict, "category": category}
+
+
+def outcome_str(record: dict | None) -> str:
+    if record is None or record["verdict"] is None:
+        return "NONE"
+    if record["category"]:
+        return f"{record['verdict']}[{record['category']}]"
+    return record["verdict"]
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(
+        description="Run the reference verifiers and any implementation under test over the "
+        "fixture set; fail on any disagreement with each other or with the pinned outcomes."
+    )
     ap.add_argument("--json", metavar="PATH", help="write a JSON parity report")
+    ap.add_argument(
+        "--verifier",
+        metavar="NAME=COMMAND",
+        action="append",
+        default=[],
+        type=parse_verifier_spec,
+        help="add an implementation under test (repeatable). COMMAND runs from the current "
+        "directory with the absolute fixtures/ path appended as its last argument and must "
+        "print the reference verifier output format (see scripts/README.md)",
+    )
     args = ap.parse_args()
 
+    verifiers = dict(VERIFIERS)
+    for name, argv in args.verifier:
+        if name in verifiers:
+            ap.error(f"--verifier: name {name!r} is already in use")
+        verifiers[name] = {"cwd": None, "cmd": [*argv, str(FIXTURES_DIR)]}
+
     fixture_files = sorted(
-        p.relative_to(REPO_ROOT / "fixtures").as_posix()
-        for p in (REPO_ROOT / "fixtures").rglob("*.json")
+        p.relative_to(FIXTURES_DIR).as_posix() for p in FIXTURES_DIR.rglob("*.json")
     )
     if not fixture_files:
         sys.stderr.write("[parity] no fixtures found\n")
         return 1
+    pinned = {fx: pinned_outcome(FIXTURES_DIR / fx) for fx in fixture_files}
 
     results: dict[str, dict[str, dict]] = {}
     exit_codes: dict[str, int] = {}
-    for name, spec in VERIFIERS.items():
+    for name, spec in verifiers.items():
         code, records = run_verifier(name, spec)
         exit_codes[name] = code
         results[name] = records
@@ -125,7 +208,7 @@ def main() -> int:
                 f"{name} fixture set mismatch: missing={sorted(missing)} extra={sorted(extra)}"
             )
 
-    names = list(VERIFIERS)
+    names = list(verifiers)
     table: dict[str, dict] = {}
     for fx in fixture_files:
         row = {n: results[n].get(fx) for n in names}
@@ -135,6 +218,17 @@ def main() -> int:
             vals = {n: row[n][field] for n in present}
             if len(set(vals.values())) > 1:
                 divergences.append(f"{fx}: {field} divergence {vals}")
+        pin = pinned[fx]
+        if pin is None:
+            continue
+        for n in present:
+            r = row[n]
+            if r["verdict"] != pin["verdict"] or (
+                pin["category"] and r["category"] != pin["category"]
+            ):
+                divergences.append(
+                    f"{fx}: {n} observed {outcome_str(r)}, pinned outcome is {outcome_str(pin)}"
+                )
 
     print(f"parity: {len(fixture_files)} fixtures x {len(names)} verifiers")
     for fx, row in table.items():
@@ -154,6 +248,7 @@ def main() -> int:
             json.dumps(
                 {
                     "fixtures": table,
+                    "pinned": {fx: outcome_str(pin) for fx, pin in pinned.items()},
                     "exitCodes": exit_codes,
                     "divergences": divergences,
                     "agree": not divergences,
@@ -169,7 +264,10 @@ def main() -> int:
         for d in divergences:
             print(f"  - {d}")
         return 1
-    print("\nPARITY: PASS (all implementations agree on gate, verdict, and category)")
+    print(
+        "\nPARITY: PASS (all implementations agree on gate, verdict, and category, "
+        "and match the pinned outcomes)"
+    )
     return 0
 
 

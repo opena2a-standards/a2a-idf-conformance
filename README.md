@@ -2,7 +2,7 @@
 
 Canonical conformance suite for the **A2A-IDF** (Agent-to-Agent Identity Framework) specification proposed in [a2aproject/A2A#1496](https://github.com/a2aproject/A2A/pull/1496).
 
-Implementations of A2A-IDF run the fixtures in this repository to verify byte-match interoperability against the reference vectors. The suite is intentionally narrow: it covers the identity-framework layer (verification levels, attestation array shape, message-signing wire format, delegation chain and bilateral receipt envelope shapes (unverified)) and composes with adjacent conformance suites for the wire signature layer ([#1829](https://github.com/a2aproject/A2A/issues/1829)), identity-claim envelope layer ([#1786](https://github.com/a2aproject/A2A/issues/1786) CTEF), and delegation/continuity layer ([#1575](https://github.com/a2aproject/A2A/issues/1575) APS).
+Implementations of A2A-IDF run the fixtures in this repository to verify byte-match interoperability against the reference vectors, and compare their verdicts with the pinned outcomes and the reference verifiers through the parity gate (see [Testing an implementation](#testing-an-implementation)). The suite is intentionally narrow: it covers the identity-framework layer (verification levels, attestation array shape, message-signing wire format, delegation chain and bilateral receipt envelope shapes (unverified)) and composes with adjacent conformance suites for the wire signature layer ([#1829](https://github.com/a2aproject/A2A/issues/1829)), identity-claim envelope layer ([#1786](https://github.com/a2aproject/A2A/issues/1786) CTEF), and delegation/continuity layer ([#1575](https://github.com/a2aproject/A2A/issues/1575) APS).
 
 ## Status
 
@@ -36,6 +36,16 @@ MANIFEST.sha256    SHA-256 byte-pin over every fixture and vector (generator-emi
 conformance.json   Machine-readable conformance profile (derived from the fixtures, CI-verified)
 COSIGNERS.md       Second-party cosignature registry over MANIFEST.sha256
 ```
+
+## Testing an implementation
+
+Wrap your implementation in a command that takes a fixtures directory, evaluates every `*.json` fixture under it, and prints the reference verifier output format (`PASS|FAIL|ERROR <path>`, then `observed: ACCEPT` or `observed: REJECT[CATEGORY]`). Then add it to the parity gate:
+
+```bash
+python3 scripts/parity/parity.py --verifier mylib="node ../mylib/conformance.js"
+```
+
+The gate runs it beside both reference verifiers and reports `PARITY: PASS` only when every implementation agrees on every fixture and matches the outcome pinned in the fixture. The full input and output contract is in [`scripts/README.md`](./scripts/README.md#testing-another-implementation).
 
 ## Composition fixtures
 
