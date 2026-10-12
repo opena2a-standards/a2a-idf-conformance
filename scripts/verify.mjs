@@ -97,12 +97,28 @@ function rawEd25519ToSpkiPem(raw) {
   return `-----BEGIN PUBLIC KEY-----\n${b64}\n-----END PUBLIC KEY-----\n`;
 }
 
+// A PEM the crypto library cannot read, or one that holds a key of another type
+// (RSA, EC), is reported in one wording, as verify.py words it: the library's
+// own message (error:1E08010C:DECODER routines::unsupported) comes from OpenSSL.
+function ed25519KeyFromPem(pem) {
+  let key = null;
+  try {
+    key = createPublicKey({ key: pem, format: "pem" });
+  } catch {
+    // Reported below.
+  }
+  if (key?.asymmetricKeyType !== "ed25519") {
+    throw new Error("compact-form publicKeyPem is not an Ed25519 SPKI PEM");
+  }
+  return key;
+}
+
 function extractPublicKeyFromKeyidResolution(kr) {
   if (kr.shape === "compact") {
     if (typeof kr.publicKeyPem !== "string") {
       throw new Error("compact-form keyidResolution missing publicKeyPem");
     }
-    return createPublicKey({ key: kr.publicKeyPem, format: "pem" });
+    return ed25519KeyFromPem(kr.publicKeyPem);
   }
   if (kr.shape !== "did-json") {
     throw new Error(`unsupported keyidResolution shape: ${kr.shape}`);
@@ -111,19 +127,20 @@ function extractPublicKeyFromKeyidResolution(kr) {
   if (!Array.isArray(methods) || methods.length === 0) {
     throw new Error("DID Document has no verificationMethod entries");
   }
-  // Prefer assertionMethod-referenced verificationMethod when present.
+  // Prefer assertionMethod-referenced verificationMethod when present. An entry
+  // that is not a JSON object (null among them) carries no key encoding.
   const preferredId = pickAssertionMethodId(kr.document);
   const method =
-    methods.find((m) => preferredId !== null && m.id === preferredId) ??
+    methods.find((m) => preferredId !== null && m?.id === preferredId) ??
     methods[0];
 
-  if (typeof method.publicKeyMultibase === "string") {
+  if (typeof method?.publicKeyMultibase === "string") {
     const raw = multibaseToRawEd25519(method.publicKeyMultibase);
     const pem = rawEd25519ToSpkiPem(raw);
     return createPublicKey({ key: pem, format: "pem" });
   }
   if (
-    method.publicKeyJwk &&
+    method?.publicKeyJwk &&
     method.publicKeyJwk.kty === "OKP" &&
     method.publicKeyJwk.crv === "Ed25519" &&
     typeof method.publicKeyJwk.x === "string"
@@ -489,7 +506,8 @@ function evaluateIdentity(fixture) {
     return reject("SHAPE_INVALID", "agentCard.capabilities.extensions missing");
   }
   const ext = extensions.find((e) => e?.uri === IDENTITY_EXTENSION_URI);
-  if (!ext || typeof ext.params !== "object" || ext.params === null) {
+  // typeof is "object" for an array too, which verify.py does not take as params.
+  if (!ext || jsonType(ext.params) !== "object") {
     return reject("SHAPE_INVALID", "agent-identity extension (or its params) missing");
   }
   const p = ext.params;
@@ -536,25 +554,28 @@ function evaluateDomainVerified(fixture, card, p, pk) {
   if (dnsTxt.recordName !== `_a2a-identity.${domain}`) {
     return reject("DOMAIN_MISMATCH", `record name ${dnsTxt.recordName} != _a2a-identity.${domain}`);
   }
+  // A field the record does not carry is quoted as (missing).
   const fields = {};
   for (const part of dnsTxt.recordValue.split("; ")) {
     const eq = part.indexOf("=");
     if (eq > 0) fields[part.slice(0, eq)] = part.slice(eq + 1);
   }
-  if (fields.v !== "a2a1") return reject("SHAPE_INVALID", `unsupported record version: ${fields.v}`);
+  if (fields.v !== "a2a1") {
+    return reject("SHAPE_INVALID", `unsupported record version: ${reasonText(fields.v)}`);
+  }
   const urnParts = p.agentId.split(":");
   if (urnParts[3] !== domain) {
     return reject("DOMAIN_MISMATCH", `agentId domain ${urnParts[3]} != provider domain ${domain}`);
   }
   if (fields.agent !== urnParts[4]) {
-    return reject("AGENT_MISMATCH", `record agent ${fields.agent} != agentId name ${urnParts[4]}`);
+    return reject("AGENT_MISMATCH", `record agent ${reasonText(fields.agent)} != agentId name ${urnParts[4]}`);
   }
   if (fields.kid !== pk.kid) {
-    return reject("KID_MISMATCH", `record kid ${fields.kid} != declared kid ${pk.kid}`);
+    return reject("KID_MISMATCH", `record kid ${reasonText(fields.kid)} != declared kid ${pk.kid}`);
   }
   const fp = b64urlNoPad(createHash("sha256").update(b64urlDecode(pk.x)).digest());
   if (fields.fp !== fp) {
-    return reject("FINGERPRINT_MISMATCH", `record fp ${fields.fp} != computed ${fp}`);
+    return reject("FINGERPRINT_MISMATCH", `record fp ${reasonText(fields.fp)} != computed ${fp}`);
   }
   return { verdict: "ACCEPT" };
 }
@@ -726,28 +747,23 @@ function isDirectory(path) {
   }
 }
 
-// A directory met during the walk, which a symlink to a directory is not.
-function isRealDirectory(path) {
+// The listing of a `*.json` path met during the walk, or null for one that is a
+// directory once symlinks are followed (a symlink to a directory is not a
+// fixture). A regular file is listed, and so is a path whose status cannot be
+// read at all (a dangling symlink, a symlink loop), which is then reported as
+// ERROR when it is read. A path of any other kind (a socket, a FIFO, a device)
+// is listed with an error and never read, as in verify.py: reading a socket
+// fails, and reading a FIFO waits until a writer opens it.
+function fixtureListing(path) {
+  let status;
   try {
-    return lstatSync(path).isDirectory();
+    status = statSync(path);
   } catch {
-    return false;
+    return { path };
   }
-}
-
-// A `*.json` path that is not a directory once symlinks are followed, so a
-// symlink to a directory is not a fixture, or one whose status cannot be read
-// at all (a dangling symlink, a symlink loop), which is then reported as ERROR.
-// A path of another kind is listed whatever it is, so one that cannot be read
-// as a file (a socket) is reported as ERROR too, not passed over. A FIFO is
-// read as a file is: the read waits until a writer opens it.
-function isFixtureFile(path) {
-  if (!path.endsWith(".json")) return false;
-  try {
-    return !statSync(path).isDirectory();
-  } catch {
-    return true;
-  }
+  if (status.isDirectory()) return null;
+  if (status.isFile()) return { path };
+  return { path, error: new Error(`not a regular file: ${path}`) };
 }
 
 // The fixtures `arg` names, each with the error that kept it from being listed.
@@ -757,8 +773,10 @@ function isFixtureFile(path) {
 // walked for `*.json` files without following symlinks to directories, as in
 // verify.py: a followed link lists the fixtures under it a second time, and
 // once more per level when it points at a parent directory. A directory that
-// cannot be listed is returned with its error, so a permissions problem is
-// reported as ERROR rather than read as a pass.
+// cannot be listed, and an entry whose status cannot be read (every entry of a
+// directory that can be listed but not searched, which may be a directory of
+// fixtures), is returned with its error, so a permissions problem is reported
+// as ERROR rather than read as a pass.
 function collectFixtures(arg) {
   const abs = resolve(arg);
   if (!isDirectory(abs)) return [{ path: abs }];
@@ -773,8 +791,19 @@ function collectFixtures(arg) {
     }
     for (const entry of entries) {
       const p = join(dir, entry);
-      if (isRealDirectory(p)) walk(p);
-      else if (isFixtureFile(p)) out.push({ path: p });
+      let status;
+      try {
+        status = lstatSync(p);
+      } catch (error) {
+        out.push({ path: p, error });
+        continue;
+      }
+      if (status.isDirectory()) {
+        walk(p);
+      } else if (p.endsWith(".json")) {
+        const listing = fixtureListing(p);
+        if (listing !== null) out.push(listing);
+      }
     }
   };
   walk(abs);
@@ -816,11 +845,13 @@ function main() {
     } catch (err) {
       failCount++;
       console.log(`ERROR ${abs}`);
-      // A failed system call (ENOENT, ENOTDIR, EACCES, ELOOP) is a problem with
-      // the input and its message names the path; a stack trace is kept for a
-      // verifier fault. collectFixtures walks directories, so no directory is
-      // read as a file (EISDIR, whose message names no path).
-      console.log(`      ${err.syscall !== undefined ? err.message : (err.stack ?? err.message)}`);
+      // A failed system call (ENOENT, ENOTDIR, EACCES, ELOOP) and an entry the
+      // walk does not read are problems with the input, and their message names
+      // the path; a stack trace is kept for a verifier fault. collectFixtures
+      // walks directories, so no directory is read as a file (EISDIR, whose
+      // message names no path).
+      const inputError = err.syscall !== undefined || err === listingError;
+      console.log(`      ${inputError ? err.message : (err.stack ?? err.message)}`);
     }
   }
   console.log(`summary: ${passCount} pass, ${failCount} fail (${paths.length} fixtures)`);
