@@ -103,6 +103,13 @@ CASES = [
     Case("port", provider_url("https://example.com:8443/card"), "ACCEPT"),
     Case("port-out-of-range", provider_url("https://example.com:99999"), "REJECT[SHAPE_INVALID]"),
     Case("port-not-a-number", provider_url("https://example.com:8o"), "REJECT[SHAPE_INVALID]"),
+    # A port may carry leading zeros; only its value must be at most 65535.
+    Case("port-zero-padded", provider_url("https://example.com:" + "0" * 4298 + "443"), "ACCEPT"),
+    Case(
+        "port-zero-padded-out-of-range",
+        provider_url("https://example.com:" + "0" * 4300 + "99999"),
+        "REJECT[SHAPE_INVALID]",
+    ),
     Case("username", provider_url("https://someone@example.com"), "ACCEPT"),
     Case("username-without-host", provider_url("https://someone@"), "REJECT[SHAPE_INVALID]"),
     Case("trailing-dot-is-kept", provider_url("https://example.com."), "REJECT[DOMAIN_MISMATCH]"),

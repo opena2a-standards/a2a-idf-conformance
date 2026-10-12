@@ -591,7 +591,10 @@ _WINDOWS_DRIVE_LETTER = re.compile(r"[A-Za-z][:|]")
 def _valid_port(port: str) -> bool:
     if port == "":
         return True
-    return port.isascii() and port.isdigit() and len(port.lstrip("0")) <= 5 and int(port) <= 65535
+    # Leading zeros are allowed. Convert the digits without them: Python caps the
+    # length of a decimal string it converts.
+    digits = port.lstrip("0")
+    return port.isascii() and port.isdigit() and len(digits) <= 5 and int(digits or "0") <= 65535
 
 
 def _hostname_of(url: Any) -> str | None:
