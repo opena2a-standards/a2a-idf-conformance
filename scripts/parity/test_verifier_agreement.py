@@ -39,9 +39,10 @@ VERIFIERS = {
 class Case(NamedTuple):
     name: str
     fixture: dict
-    observed: str  # "ACCEPT" or "REJECT[CATEGORY]"
+    observed: str | None  # "ACCEPT" or "REJECT[CATEGORY]"; None for a FAIL at stage schema
     pinned: str | None = None  # written to `expected`; defaults to `observed`
     nested: str | None = None  # JSON text written in place of the string NESTED
+    expected: dict | None = None  # written to `expected` as is, in place of `pinned`
 
 
 # A placeholder for a value too deeply nested for json.dumps to write; the
@@ -50,9 +51,12 @@ NESTED = "nested-value-placeholder"
 
 # Deeper than a recursive walk of the attestation reached in either verifier
 # (verify.mjs overflowed its call stack at 3,000 levels, verify.py exceeded its
-# recursion limit at 900), and shallower than json.loads on Python 3.12 parses
-# (8,000 levels load, 10,000 do not).
-DEPTH = 5000
+# recursion limit at 900), and deeper than json.loads parses on the CPython
+# builds measured (fewer than 1,000 levels on 3.11.14, fewer than 1,500 on
+# 3.12.2, fewer than 10,000 on 3.12.12 and 3.13.12, 116,174 on 3.14.3 on macOS,
+# where the limit is the C stack), so these cases also hold verify.py to
+# reading a fixture without recursion, as JSON.parse in verify.mjs does.
+DEPTH = 200_000
 
 
 def identity_params(fixture: dict) -> dict:
@@ -68,6 +72,13 @@ def provider_url(url: Any, domain: str = "example.com") -> dict:
     params["agentId"] = f"urn:a2a:agent:{domain}:financial-advisor:v2"
     params["attestations"][0]["domain"] = domain
     fixture["evidence"]["dnsTxt"]["recordName"] = f"_a2a-identity.{domain}"
+    return fixture
+
+
+def domain_verified(**members: Any) -> dict:
+    """The valid Level 1 fixture with top-level members replaced."""
+    fixture = json.loads((LEVELS_DIR / "level-1-domain-verified.json").read_text())
+    fixture.update(members)
     return fixture
 
 
@@ -157,6 +168,20 @@ CASES = [
         "REJECT[SHAPE_INVALID]",
         nested="[" * DEPTH + '"\\udc00"' + "]" * DEPTH,
     ),
+    # A schema reason names an array by its JSON type, so a deeply nested
+    # expected.verifyResult fails at stage schema in both verifiers.
+    Case(
+        "deeply-nested-verify-result",
+        organization(),
+        None,
+        nested="[" * DEPTH + "]" * DEPTH,
+        expected={"verifyResult": NESTED},
+    ),
+    # agentCard and evidence are the material under evaluation, so a value that
+    # is not a JSON object is a shape reject, not a schema failure.
+    Case("agent-card-null", domain_verified(agentCard=None), "REJECT[SHAPE_INVALID]"),
+    Case("agent-card-array", domain_verified(agentCard=[]), "REJECT[SHAPE_INVALID]"),
+    Case("evidence-array", domain_verified(evidence=[]), "REJECT[SHAPE_INVALID]"),
     # A reject reason that quotes a lone surrogate is still printed as FAIL, not ERROR.
     Case("lone-surrogate-in-reason", attestation_domain("example.com\udc00"), "REJECT[DOMAIN_MISMATCH]", pinned="ACCEPT"),
 ]
@@ -169,6 +194,8 @@ def expected_block(outcome: str) -> dict:
 
 
 def record(case: Case) -> dict:
+    if case.observed is None:
+        return {"gate": "FAIL", "verdict": None, "category": None}
     block = expected_block(case.observed)
     return {
         "gate": "PASS" if case.pinned in (None, case.observed) else "FAIL",
@@ -185,7 +212,7 @@ class VerifierAgreementTests(unittest.TestCase):
         root = Path(cls._tmp.name) / "fixtures"
         root.mkdir()
         for case in CASES:
-            case.fixture["expected"] = expected_block(case.pinned or case.observed)
+            case.fixture["expected"] = case.expected or expected_block(case.pinned or case.observed)
             text = json.dumps(case.fixture)
             if case.nested is not None:
                 text = text.replace(json.dumps(NESTED), case.nested)

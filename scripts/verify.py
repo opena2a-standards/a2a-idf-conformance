@@ -12,6 +12,8 @@ Handles both fixture families:
     + A2A-IDF §6 dual-shape keyid resolution
   - level fixtures (fixtures/levels/**): A2A-IDF §1 verification levels
     (SELF_ASSERTED / DOMAIN_VERIFIED / ORGANIZATION_VERIFIED)
+Every fixture is first checked against its family's schema in ../schemas/;
+a fixture missing a required field fails at stage `schema`.
 
 Usage:  python3 verify.py <fixture.json | directory> [...]
 Directories are walked recursively for *.json fixtures.
@@ -25,7 +27,9 @@ import base64
 import hashlib
 import ipaddress
 import json
+import os
 import re
+import stat
 import sys
 import unicodedata
 from pathlib import Path
@@ -243,26 +247,11 @@ def gate_verdict(
 # --- composition fixtures (RFC 9421 wire layer + §6 keyid resolution) -------------
 
 
-def _composition_schema_error(fixture: dict[str, Any]) -> str | None:
-    """The optional crossSuiteEquivalence block, when present, must be a JSON
-    object, and so must its `envoys` member. Same rule and wording as
-    verify.mjs, so a malformed block is neither skipped nor raised on."""
-    if "crossSuiteEquivalence" not in fixture:
-        return None
-    cse = fixture["crossSuiteEquivalence"]
-    if not isinstance(cse, dict):
-        return "crossSuiteEquivalence is present but is not a JSON object"
-    if "envoys" in cse and not isinstance(cse["envoys"], dict):
-        return "crossSuiteEquivalence.envoys is present but is not a JSON object"
-    return None
-
-
 def verify_composition_fixture(fixture: dict[str, Any]) -> tuple[bool, str | None, list[str]]:
+    """The fixture has passed the schema stage (verify_fixture), so its required
+    blocks are present and the optional crossSuiteEquivalence block and its
+    `envoys` member, when present, are JSON objects."""
     expected = fixture.get("expected", {})
-
-    schema_error = _composition_schema_error(fixture)
-    if schema_error is not None:
-        return False, None, ["stage:  schema", f"reason: {schema_error}"]
 
     # Recompute Content-Digest. Algorithm is taken from the prefix of
     # expected.contentDigest (RFC 9530).
@@ -640,8 +629,9 @@ def _hostname_of(url: Any) -> str | None:
     Approximated: the mapping of a non-ASCII domain (see `_ascii_host`). The
     UTS #46 validity checks are not made, so a domain those checks refuse (a
     disallowed code point other than U+FFFD, a joiner out of context, a Bidi
-    rule violation) is reported here as its Punycode form, and an `xn--` label
-    given in ASCII is returned as written."""
+    rule violation) is reported here as a host, usually a Punycode form, and
+    can be plain ASCII (U+2024 ONE DOT LEADER maps to a full stop), and an
+    `xn--` label given in ASCII is returned as written."""
     if not isinstance(url, str):
         return None
     # The parser reads a lone surrogate as U+FFFD, drops C0 controls and spaces
@@ -859,21 +849,249 @@ def verify_level_fixture(fixture: dict[str, Any]) -> tuple[bool, str | None, lis
     return ok, observed_str, lines
 
 
+# --- fixture schema (schemas/*.json) ----------------------------------------------
+
+# The committed JSON Schemas are the required-field contract for each fixture
+# family. This checker implements exactly the keywords those schemas use:
+# type, const, enum, required, properties, allOf, and if/then.
+SCHEMA_DIR = Path(__file__).resolve().parent.parent / "schemas"
+SCHEMA_FILES = {
+    "composition": "fixture-composition-v1.json",
+    "level": "fixture-level-v1.json",
+}
+_schema_cache: dict[str, dict[str, Any]] = {}
+
+
+def load_schemas() -> dict[str, dict[str, Any]]:
+    if not _schema_cache:
+        for family, name in SCHEMA_FILES.items():
+            _schema_cache[family] = json.loads((SCHEMA_DIR / name).read_text(encoding="utf-8"))
+    return _schema_cache
+
+
+def fixture_family(fixture: Any, schemas: dict[str, dict[str, Any]]) -> str:
+    """The fixture's $schema selects its family; without a known $schema, a
+    fixture carrying an agentCard is a level fixture and anything else is
+    composition."""
+    declared = fixture.get("$schema") if isinstance(fixture, dict) else None
+    for family, schema in schemas.items():
+        if declared == schema["$id"]:
+            return family
+    return "level" if isinstance(fixture, dict) and "agentCard" in fixture else "composition"
+
+
+def _json_type(v: Any) -> str:
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "boolean"
+    if isinstance(v, int):
+        return "integer"
+    if isinstance(v, float):
+        return "integer" if v.is_integer() else "number"
+    if isinstance(v, str):
+        return "string"
+    if isinstance(v, list):
+        return "array"
+    return "object"
+
+
+def _json_text(v: Any) -> str:
+    """A scalar as JSON text, and an array or an object by its JSON type:
+    json.dumps recurses once per level of nesting, so it raises on a deeply
+    nested value. verify.mjs words a value the same way."""
+    vtype = _json_type(v)
+    if vtype in ("array", "object"):
+        return f"a JSON {vtype}"
+    return json.dumps(v, ensure_ascii=False, separators=(",", ":"))
+
+
+def _field_path(path: str, key: str) -> str:
+    return key if path == "" else f"{path}.{key}"
+
+
+def _same_value(a: Any, b: Any) -> bool:
+    # JSON equality: true is not 1, as in JavaScript's ===.
+    return _json_type(a) == _json_type(b) and a == b
+
+
+def schema_violation(schema: dict[str, Any], value: Any, path: str) -> str | None:
+    """Returns the first violation as a message, or None when the value conforms.
+    `type` is a type name or a list of them."""
+    where = path or "fixture"
+    vtype = _json_type(value)
+    stype = schema.get("type")
+    if stype is not None:
+        types = stype if isinstance(stype, list) else [stype]
+        if not any(t == vtype or (t == "number" and vtype == "integer") for t in types):
+            names = " or ".join(types)
+            if path == "":
+                return f"fixture is not a JSON {names}"
+            return f"{path} is present but is not a JSON {names}"
+    if "const" in schema and not _same_value(value, schema["const"]):
+        return f"{where}: expected {_json_text(schema['const'])}, got {_json_text(value)}"
+    if "enum" in schema and not any(_same_value(value, v) for v in schema["enum"]):
+        allowed = ", ".join(_json_text(v) for v in schema["enum"])
+        return f"{where}: {_json_text(value)} is not one of {allowed}"
+    if vtype == "object":
+        for key in schema.get("required", []):
+            if key not in value:
+                return f"missing required field {_field_path(path, key)}"
+        for key, sub in schema.get("properties", {}).items():
+            if key not in value:
+                continue
+            violation = schema_violation(sub, value[key], _field_path(path, key))
+            if violation is not None:
+                return violation
+    for sub in schema.get("allOf", []):
+        violation = schema_violation(sub, value, path)
+        if violation is not None:
+            return violation
+    if "if" in schema and "then" in schema and schema_violation(schema["if"], value, path) is None:
+        return schema_violation(schema["then"], value, path)
+    return None
+
+
 # --- driver -----------------------------------------------------------------------
 
 
+def _reject_constant(name: str) -> None:
+    # json.loads reads NaN, Infinity and -Infinity as numbers. They are not JSON,
+    # and JSON.parse in verify.mjs raises on them.
+    raise ValueError(f"fixture is not valid JSON: {name} is not a JSON value")
+
+
+_JSON_SCAN = json.JSONDecoder(parse_constant=_reject_constant).scan_once
+_JSON_WHITESPACE = re.compile(r"[ \t\n\r]*")
+
+
+def _load_json(text: str) -> Any:
+    """json.loads(text, parse_constant=_reject_constant), without recursion.
+    json.loads recurses once per level of nesting and raises past a depth that
+    depends on the interpreter (fewer than 1,000 levels on CPython 3.11, fewer
+    than 10,000 on 3.12 and 3.13), where JSON.parse in verify.mjs reaches a
+    verdict. Here the open arrays and objects are kept on a list, and every
+    string, number and literal is read by the json module's own scanner, so
+    each value decodes as json.loads decodes it."""
+    skip = _JSON_WHITESPACE.match
+    # Each open container with the key its next value is stored under (None
+    # for an array).
+    stack: list[tuple[Any, str | None]] = []
+    idx = skip(text).end()
+    while True:
+        # Read one value at idx: open a container, or scan a complete value.
+        opener = text[idx : idx + 1]
+        if opener in ("[", "{"):
+            container: Any = [] if opener == "[" else {}
+            idx = skip(text, idx + 1).end()
+            if text[idx : idx + 1] != ("]" if opener == "[" else "}"):
+                key = None
+                if opener == "{":
+                    key, idx = _json_member_name(text, idx)
+                stack.append((container, key))
+                continue
+            value, idx = container, idx + 1
+        else:
+            try:
+                value, idx = _JSON_SCAN(text, idx)
+            except StopIteration as stop:
+                raise json.JSONDecodeError("Expecting value", text, stop.value) from None
+        # Store the value in the container it closes, then close every
+        # container that ends after it.
+        while stack:
+            container, key = stack[-1]
+            if key is None:
+                container.append(value)
+            else:
+                container[key] = value
+            idx = skip(text, idx).end()
+            delimiter = text[idx : idx + 1]
+            if delimiter == ",":
+                idx = skip(text, idx + 1).end()
+                if key is not None:
+                    key, idx = _json_member_name(text, idx)
+                    stack[-1] = (container, key)
+                break
+            if delimiter != ("]" if key is None else "}"):
+                raise json.JSONDecodeError("Expecting ',' delimiter", text, idx)
+            stack.pop()
+            value, idx = container, idx + 1
+        else:
+            end = skip(text, idx).end()
+            if end != len(text):
+                raise json.JSONDecodeError("Extra data", text, end)
+            return value
+
+
+def _json_member_name(text: str, idx: int) -> tuple[str, int]:
+    """The member name at idx and the index of the value after its colon."""
+    if text[idx : idx + 1] != '"':
+        raise json.JSONDecodeError("Expecting property name enclosed in double quotes", text, idx)
+    name, idx = _JSON_SCAN(text, idx)
+    idx = _JSON_WHITESPACE.match(text, idx).end()
+    if text[idx : idx + 1] != ":":
+        raise json.JSONDecodeError("Expecting ':' delimiter", text, idx)
+    return name, _JSON_WHITESPACE.match(text, idx + 1).end()
+
+
 def verify_fixture(path: Path) -> tuple[bool, str | None, list[str]]:
-    fixture = json.loads(path.read_text(encoding="utf-8"))
-    if "agentCard" in fixture:
+    fixture = _load_json(path.read_text(encoding="utf-8"))
+    schemas = load_schemas()
+    family = fixture_family(fixture, schemas)
+    violation = schema_violation(schemas[family], fixture, "")
+    if violation is not None:
+        return False, None, ["stage:  schema", f"reason: {violation}"]
+    if family == "level":
         return verify_level_fixture(fixture)
     return verify_composition_fixture(fixture)
 
 
-def collect_fixtures(arg: str) -> list[Path]:
-    path = Path(arg).resolve()
-    if not path.is_dir():
-        return [path]
-    return sorted(p for p in path.rglob("*.json") if p.is_file())
+def _is_real_directory(path: Path) -> bool:
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def _is_fixture_file(path: Path) -> bool:
+    """A `*.json` path that is a file, or one that cannot be read at all (a
+    dangling symlink, a symlink loop), which is then reported as ERROR."""
+    if not path.name.endswith(".json"):
+        return False
+    try:
+        return stat.S_ISREG(os.stat(path).st_mode)
+    except OSError:
+        return True
+
+
+def collect_fixtures(arg: str) -> list[tuple[Path, OSError | None]]:
+    """The fixtures `arg` names, each with the error that kept it from being
+    listed (None when it was listed). A path that is not a directory is
+    returned as it is, so one that cannot be read (missing, a symlink loop,
+    no read permission) is reported as ERROR when it is read. A directory is
+    walked for `*.json` files without following symlinks to directories, and
+    a directory that cannot be listed is returned with its error, so a
+    permissions problem is reported as ERROR rather than read as a pass. The
+    path is made absolute without resolving symlinks, as in verify.mjs."""
+    path = Path(os.path.abspath(arg))
+    if not os.path.isdir(path):
+        return [(path, None)]
+    found: list[tuple[Path, OSError | None]] = []
+    pending = [path]
+    while pending:
+        directory = pending.pop()
+        try:
+            names = os.listdir(directory)
+        except OSError as exc:
+            found.append((directory, exc))
+            continue
+        for name in names:
+            entry = directory / name
+            if _is_real_directory(entry):
+                pending.append(entry)
+            elif _is_fixture_file(entry):
+                found.append((entry, None))
+    return sorted(found, key=lambda item: item[0])
 
 
 def main() -> int:
@@ -886,11 +1104,13 @@ def main() -> int:
     # UTF-8 cannot encode: print it escaped instead of raising while reporting.
     sys.stdout.reconfigure(errors="backslashreplace")
 
-    paths = [p for arg in args for p in collect_fixtures(arg)]
+    paths = [entry for arg in args for entry in collect_fixtures(arg)]
     pass_count = 0
     fail_count = 0
-    for path in paths:
+    for path, listing_error in paths:
         try:
+            if listing_error is not None:
+                raise listing_error
             ok, observed, lines = verify_fixture(path)
             if ok:
                 pass_count += 1

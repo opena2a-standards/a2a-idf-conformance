@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+  "title": "A2A-IDF verification-level fixture",
+  "description": "Fixtures under fixtures/levels/. Prose reference: fixtures/levels/README.md. The agentCard and evidence members are the material under evaluation; a malformed agentCard is a SHAPE_INVALID verdict, not a schema failure, so their contents are not constrained here.",
+  "type": "object",
+  "required": ["$schema", "name", "description", "spec", "level", "agentCard", "expected"],
+  "properties": {
+    "$schema": { "const": "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json" },
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "spec": { "type": "array" },
+    "level": { "type": "integer", "enum": [0, 1, 2] },
+    "agentCard": {},
+    "evidence": {},
+    "expected": {
+      "type": "object",
+      "properties": {
+        "verifyResult": { "enum": ["ACCEPT", "REJECT"], "default": "ACCEPT" },
+        "rejectCategory": {
+          "enum": [
+            "SHAPE_INVALID",
+            "DOMAIN_MISMATCH",
+            "AGENT_MISMATCH",
+            "KID_MISMATCH",
+            "FINGERPRINT_MISMATCH",
+            "SUBJECT_MISMATCH",
+            "SIGNATURE_INVALID",
+            "NOT_YET_VALID",
+            "EXPIRED"
+          ]
+        }
+      },
+      "if": { "required": ["verifyResult"], "properties": { "verifyResult": { "const": "REJECT" } } },
+      "then": { "required": ["rejectCategory"] }
+    }
+  }
+}

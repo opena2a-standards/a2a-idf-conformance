@@ -8,6 +8,8 @@
 //     + A2A-IDF §6 dual-shape keyid resolution
 //   - level fixtures (fixtures/levels/**): A2A-IDF §1 verification levels
 //     (SELF_ASSERTED / DOMAIN_VERIFIED / ORGANIZATION_VERIFIED)
+// Every fixture is first checked against its family's schema in ../schemas/;
+// a fixture missing a required field fails at stage `schema`.
 //
 // Usage:  node verify.mjs <fixture.json | directory> [...]
 // Directories are walked recursively for *.json fixtures.
@@ -210,30 +212,11 @@ function gateVerdict(path, expected, verdict, category) {
 
 // --- composition fixtures (RFC 9421 wire layer + §6 keyid resolution) ----------
 
-function isJsonObject(v) {
-  return v !== null && typeof v === "object" && !Array.isArray(v);
-}
-
-// The optional crossSuiteEquivalence block, when present, must be a JSON object,
-// and so must its `envoys` member. Reading a field of a string, array or null
-// yields nothing, so a malformed block would otherwise be skipped as if absent.
-function compositionSchemaError(fixture) {
-  const cse = fixture.crossSuiteEquivalence;
-  if (cse === undefined) return null;
-  if (!isJsonObject(cse)) return "crossSuiteEquivalence is present but is not a JSON object";
-  if (cse.envoys !== undefined && !isJsonObject(cse.envoys)) {
-    return "crossSuiteEquivalence.envoys is present but is not a JSON object";
-  }
-  return null;
-}
-
+// The fixture has passed the schema stage (verifyFixture), so its required
+// blocks are present and the optional crossSuiteEquivalence block and its
+// `envoys` member, when present, are JSON objects.
 function verifyCompositionFixture(fixture, path) {
   const expected = fixture.expected;
-
-  const schemaError = compositionSchemaError(fixture);
-  if (schemaError !== null) {
-    return { path, ok: false, stage: "schema", reason: schemaError };
-  }
 
   // Recompute Content-Digest from body — confirms the fixture is internally consistent.
   // Algorithm is taken from the prefix of expected.contentDigest (RFC 9530).
@@ -613,25 +596,138 @@ function verifyLevelFixture(fixture, path) {
   return gate;
 }
 
+// --- fixture schema (schemas/*.json) ---------------------------------------------
+
+// The committed JSON Schemas are the required-field contract for each fixture
+// family. This checker implements exactly the keywords those schemas use:
+// type, const, enum, required, properties, allOf, and if/then.
+const SCHEMA_FILES = {
+  composition: "fixture-composition-v1.json",
+  level: "fixture-level-v1.json",
+};
+let schemaCache = null;
+
+function loadSchemas() {
+  if (schemaCache === null) {
+    schemaCache = {};
+    for (const [family, file] of Object.entries(SCHEMA_FILES)) {
+      const url = new URL(`../schemas/${file}`, import.meta.url);
+      schemaCache[family] = JSON.parse(readFileSync(url, "utf-8"));
+    }
+  }
+  return schemaCache;
+}
+
+// The fixture's $schema selects its family; without a known $schema, a fixture
+// carrying an agentCard is a level fixture and anything else is composition.
+function fixtureFamily(fixture, schemas) {
+  for (const [family, schema] of Object.entries(schemas)) {
+    if (fixture?.$schema === schema.$id) return family;
+  }
+  return fixture?.agentCard !== undefined ? "level" : "composition";
+}
+
+function jsonType(v) {
+  if (v === null) return "null";
+  if (Array.isArray(v)) return "array";
+  if (typeof v === "number") return Number.isInteger(v) ? "integer" : "number";
+  return typeof v;
+}
+
+// A scalar as JSON text, and an array or an object by its JSON type, as
+// verify.py words a value (json.dumps there raises on a deeply nested value).
+function jsonText(v) {
+  const type = jsonType(v);
+  return type === "array" || type === "object" ? `a JSON ${type}` : JSON.stringify(v);
+}
+
+function fieldPath(path, key) {
+  return path === "" ? key : `${path}.${key}`;
+}
+
+// Returns the first violation as a message, or null when the value conforms.
+// `type` is a type name or a list of them.
+function schemaViolation(schema, value, path) {
+  const where = path === "" ? "fixture" : path;
+  const type = jsonType(value);
+  if (schema.type !== undefined) {
+    const types = [schema.type].flat();
+    if (!types.some((t) => t === type || (t === "number" && type === "integer"))) {
+      const names = types.join(" or ");
+      return path === "" ? `fixture is not a JSON ${names}` : `${path} is present but is not a JSON ${names}`;
+    }
+  }
+  if (schema.const !== undefined && value !== schema.const) {
+    return `${where}: expected ${jsonText(schema.const)}, got ${jsonText(value)}`;
+  }
+  if (schema.enum !== undefined && !schema.enum.includes(value)) {
+    return `${where}: ${jsonText(value)} is not one of ${schema.enum.map((v) => jsonText(v)).join(", ")}`;
+  }
+  if (type === "object") {
+    for (const key of schema.required ?? []) {
+      if (!Object.hasOwn(value, key)) return `missing required field ${fieldPath(path, key)}`;
+    }
+    for (const [key, sub] of Object.entries(schema.properties ?? {})) {
+      if (!Object.hasOwn(value, key)) continue;
+      const violation = schemaViolation(sub, value[key], fieldPath(path, key));
+      if (violation !== null) return violation;
+    }
+  }
+  for (const sub of schema.allOf ?? []) {
+    const violation = schemaViolation(sub, value, path);
+    if (violation !== null) return violation;
+  }
+  if (schema.if !== undefined && schema.then !== undefined && schemaViolation(schema.if, value, path) === null) {
+    return schemaViolation(schema.then, value, path);
+  }
+  return null;
+}
+
 // --- driver ---------------------------------------------------------------------
 
 function verifyFixture(path) {
   const fixture = JSON.parse(readFileSync(path, "utf-8"));
-  if (fixture.agentCard !== undefined) return verifyLevelFixture(fixture, path);
+  const schemas = loadSchemas();
+  const family = fixtureFamily(fixture, schemas);
+  const violation = schemaViolation(schemas[family], fixture, "");
+  if (violation !== null) {
+    return { path, ok: false, stage: "schema", reason: violation };
+  }
+  if (family === "level") return verifyLevelFixture(fixture, path);
   return verifyCompositionFixture(fixture, path);
 }
 
-// A path that does not exist is returned as a fixture, so reading it fails
-// inside the per-fixture loop and is reported as ERROR, as verify.py does.
+// A path whose status cannot be read (missing, a symlink loop) is not a directory.
+function isDirectory(path) {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// The fixtures `arg` names, each with the error that kept it from being listed.
+// A path that is not a directory is returned as it is, so one that cannot be
+// read (missing, a symlink loop, no read permission) fails inside the
+// per-fixture loop and is reported as ERROR, as verify.py does. A directory that
+// cannot be listed is returned with its error, so a permissions problem is
+// reported as ERROR rather than read as a pass.
 function collectFixtures(arg) {
   const abs = resolve(arg);
-  if (!statSync(abs, { throwIfNoEntry: false })?.isDirectory()) return [abs];
+  if (!isDirectory(abs)) return [{ path: abs }];
   const out = [];
   const walk = (dir) => {
-    for (const entry of readdirSync(dir).sort()) {
+    let entries;
+    try {
+      entries = readdirSync(dir).sort();
+    } catch (error) {
+      out.push({ path: dir, error });
+      return;
+    }
+    for (const entry of entries) {
       const p = join(dir, entry);
-      if (statSync(p).isDirectory()) walk(p);
-      else if (p.endsWith(".json")) out.push(p);
+      if (isDirectory(p)) walk(p);
+      else if (p.endsWith(".json")) out.push({ path: p });
     }
   };
   walk(abs);
@@ -648,8 +744,9 @@ function main() {
   const paths = args.flatMap(collectFixtures);
   let passCount = 0;
   let failCount = 0;
-  for (const abs of paths) {
+  for (const { path: abs, error: listingError } of paths) {
     try {
+      if (listingError !== undefined) throw listingError;
       const result = verifyFixture(abs);
       if (result.ok) {
         passCount++;
@@ -672,8 +769,10 @@ function main() {
     } catch (err) {
       failCount++;
       console.log(`ERROR ${abs}`);
-      // A failed system call (ENOENT, EACCES, EISDIR) is a problem with the input
-      // and its message names the path; a stack trace is kept for a verifier fault.
+      // A failed system call (ENOENT, ENOTDIR, EACCES, ELOOP) is a problem with
+      // the input and its message names the path; a stack trace is kept for a
+      // verifier fault. collectFixtures walks directories, so no directory is
+      // read as a file (EISDIR, whose message names no path).
       console.log(`      ${err.syscall !== undefined ? err.message : (err.stack ?? err.message)}`);
     }
   }

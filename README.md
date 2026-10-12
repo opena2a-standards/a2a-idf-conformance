@@ -15,6 +15,7 @@ Byte-pinned and CI-enforced. Every fixture is pinned in [`MANIFEST.sha256`](./MA
 - [`fixtures/levels/`](./fixtures/levels/): twenty-eight fixtures for A2A-IDF §1 verification levels — Level 0 SELF_ASSERTED, Level 1 DOMAIN_VERIFIED (pinned `_a2a-identity` DNS TXT record, key fingerprint binding, and the [provider domain](./fixtures/levels/README.md#provider-domain) derived from `provider.url` as the WHATWG URL parser reports it: an internationalized host, a percent-encoded host, a backslash in the authority, a UTS #46 ignored code point, a numeric IPv4 form, a URL without a host and a URL that does not parse), Level 2 ORGANIZATION_VERIFIED (registry attestation signed over the RFC 8785 JCS form), plus two Level 2 attestations that pin RFC 8785 §3.2.3 property ordering by UTF-16 code unit (one against code-point order, with a key outside the BMP alongside one in U+E000-U+FFFF, and one against numeric and case-insensitive order, with ASCII keys) and five fixtures with a malformed field (a `null` agentId, an `attestations` value that is not an array, a `provider.url` that is not a string, a string `issuer`, an array `verifiedAt`). Every one of the nine reject categories has a single-defect negative fixture, and two multi-defect fixtures pin the documented [check order](./fixtures/levels/README.md#check-order-cross-implementation-contract).
 - [`vectors/rfc8032-7-1.json`](./vectors/rfc8032-7-1.json) and [`vectors/rfc8032-7-1-test2.json`](./vectors/rfc8032-7-1-test2.json): RFC 8032 §7.1 Test 1 (agent) and Test 2 (registry issuer) Ed25519 keypairs in every encoded form the fixtures use.
 - [`scripts/verify.mjs`](./scripts/verify.mjs) and [`scripts/verify.py`](./scripts/verify.py): reference verifiers. Node stdlib `crypto` and Python `cryptography` only; no dependency on any A2A-IDF implementation library. A [parity gate](./scripts/parity/parity.py) asserts both implementations agree per fixture on gate, verdict, and reject category.
+- [`schemas/`](./schemas/): JSON Schemas for the composition and level fixture families, identified by the `$schema` URL each fixture declares. Both reference verifiers check every fixture against its family's schema first and fail a fixture missing a required field at stage `schema`.
 - [`conformance.json`](./conformance.json): machine-readable profile mapping every tested requirement to its fixture and pinned outcome, derived from the fixtures themselves (CI fails if stale).
 
 | Layer | Spec | Suite |
@@ -31,6 +32,7 @@ fixtures/
   levels/          Verification-level fixtures (Level 0 self-asserted, Level 1 domain-verified, Level 2 organization-verified)
   composition/     Multi-layer composition fixtures (A2A-IDF wrap of #1829 wire signatures, with DID Document or compact-form key resolution)
 vectors/           Pinned test vectors (Ed25519 keypairs per RFC 8032 §7.1)
+schemas/           JSON Schemas for the composition and level fixture families
 scripts/           Reference verifiers, parity gate, deterministic fixture generator, profile generator
 MANIFEST.sha256    SHA-256 byte-pin over every fixture and vector (generator-emitted, CI-verified)
 conformance.json   Machine-readable conformance profile (derived from the fixtures, CI-verified)
@@ -88,7 +90,7 @@ If your PR wraps an existing wire-signature implementation in A2A-IDF §6 resolu
 
 1. **Generated, not hand-edited.** Fixtures are owned by [`scripts/generate-fixtures.mjs`](./scripts/generate-fixtures.mjs): add your fixture's generation code there and run it to emit the fixture and refresh `MANIFEST.sha256`. CI regenerates the whole set and fails on any byte difference, so a hand-edited fixture cannot merge. Snapshot-only fixtures (signatures committed without enough information to regenerate them) are not accepted.
 2. **Passes both reference verifiers and the parity gate.** `node scripts/verify.mjs fixtures` and `python3 scripts/verify.py fixtures` must both report `0 fail`, and `python3 scripts/parity/parity.py` must report PARITY: PASS.
-3. **Matches the schema** for its family: [`fixtures/composition/SCHEMA.md`](./fixtures/composition/SCHEMA.md) for composition fixtures, [`fixtures/levels/README.md`](./fixtures/levels/README.md) for verification-level fixtures.
+3. **Matches the schema** for its family: [`schemas/fixture-composition-v1.json`](./schemas/fixture-composition-v1.json) (prose: [`fixtures/composition/SCHEMA.md`](./fixtures/composition/SCHEMA.md)) for composition fixtures, [`schemas/fixture-level-v1.json`](./schemas/fixture-level-v1.json) (prose: [`fixtures/levels/README.md`](./fixtures/levels/README.md)) for verification-level fixtures. Both verifiers enforce it: a fixture that does not match fails at stage `schema`.
 
 Coordination thread: [a2aproject/A2A#1496](https://github.com/a2aproject/A2A/pull/1496).
 
