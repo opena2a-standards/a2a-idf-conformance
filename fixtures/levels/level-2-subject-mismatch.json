@@ -1,0 +1,81 @@
+{
+  "$schema": "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+  "name": "levels/level-2-subject-mismatch",
+  "description": "Negative fixture: an ORGANIZATION_VERIFIED AgentCard carrying a registry attestation that is validly signed and inside its validity window, but whose subject.agentId names a different agent of the same organization (urn:a2a:agent:example.com:payments-bot:v1). subject.kid matches the declared key ID. A conforming verifier MUST reject: the attestation does not bind to the declared agentId. Models replay of an attestation the registry issued to another agent.",
+  "spec": [
+    {
+      "id": "A2A-IDF",
+      "ref": "https://github.com/a2aproject/A2A/pull/1496",
+      "section": "§1 Organization Verification (attestation subject binding)"
+    },
+    {
+      "id": "RFC 8785",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+      "section": "JCS canonical form (attestation signing input)"
+    },
+    {
+      "id": "RFC 8032",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+      "section": "§7.1 Test 2 (registry issuer key)"
+    }
+  ],
+  "level": 2,
+  "agentCard": {
+    "name": "financial-advisor-agent",
+    "provider": {
+      "organization": "Example Corp",
+      "url": "https://example.com"
+    },
+    "capabilities": {
+      "extensions": [
+        {
+          "uri": "https://a2a-protocol.org/extensions/agent-identity",
+          "description": "Agent identity verification and trust signals",
+          "required": false,
+          "params": {
+            "version": "1.0.0",
+            "identityLevel": "ORGANIZATION_VERIFIED",
+            "agentId": "urn:a2a:agent:example.com:financial-advisor:v2",
+            "publicKey": {
+              "kty": "OKP",
+              "crv": "Ed25519",
+              "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+              "kid": "agent-a1b2c3d4"
+            },
+            "attestations": [
+              {
+                "type": "organization",
+                "issuer": {
+                  "name": "A2A Trust Registry",
+                  "kid": "registry-x1y2z3",
+                  "url": "https://trust.a2a-registry.org"
+                },
+                "subject": {
+                  "organization": "Example Corp",
+                  "agentId": "urn:a2a:agent:example.com:payments-bot:v1",
+                  "kid": "agent-a1b2c3d4"
+                },
+                "verifiedAt": "2026-02-17T00:00:00Z",
+                "expiresAt": "2027-02-17T00:00:00Z",
+                "signature": "u0CAovPeVz8Jh-f7R1mE-_NwvnN6gQj_RedRpZ-1VM1NNMcQ1_V_-blEWMIhNgO6KzM9YmjYPTBDBclVKuqTBw"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "evidence": {
+    "issuerPublicKey": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "PUAXw-hDiVqStwqnTRt-vJyYLM8uxJaMwM1V8Sr0Zgw",
+      "kid": "registry-x1y2z3"
+    },
+    "validationTime": "2026-07-03T00:00:00Z"
+  },
+  "expected": {
+    "verifyResult": "REJECT",
+    "rejectCategory": "SUBJECT_MISMATCH"
+  }
+}

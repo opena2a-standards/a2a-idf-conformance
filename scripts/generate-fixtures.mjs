@@ -657,12 +657,23 @@ function agentFingerprint() {
   return b64url(sha256(TEST1.rawPublic));
 }
 
-function dnsTxtRecordValue(fp) {
-  return `v=a2a1; agent=financial-advisor; kid=${AGENT_KID}; fp=${fp}`;
+function dnsTxtRecordValue(fp, { v = "a2a1", agent = "financial-advisor", kid = AGENT_KID } = {}) {
+  return `v=${v}; agent=${agent}; kid=${kid}; fp=${fp}`;
+}
+
+function domainAttestations() {
+  return [
+    {
+      type: "domain",
+      domain: "example.com",
+      verifiedAt: "2026-02-17T00:00:00Z",
+      method: "DNS_TXT",
+    },
+  ];
 }
 
 // Signs an organization attestation (RFC 8785 JCS of the object minus `signature`).
-function signedOrgAttestation({ verifiedAt, expiresAt, tamper, extra } = {}) {
+function signedOrgAttestation({ verifiedAt, expiresAt, subjectAgentId = AGENT_ID, subjectKid = AGENT_KID, tamper, extra } = {}) {
   const unsigned = {
     type: "organization",
     issuer: {
@@ -672,8 +683,8 @@ function signedOrgAttestation({ verifiedAt, expiresAt, tamper, extra } = {}) {
     },
     subject: {
       organization: "Example Corp",
-      agentId: AGENT_ID,
-      kid: AGENT_KID,
+      agentId: subjectAgentId,
+      kid: subjectKid,
     },
     verifiedAt,
     expiresAt,
@@ -727,16 +738,7 @@ function level1Fixture() {
       "Level 1 (DOMAIN_VERIFIED): an AgentCard declaring DOMAIN_VERIFIED with a domain attestation, plus the pinned DNS TXT record the domain owner published at _a2a-identity.example.com. A conforming verifier extracts the domain from provider.url, checks the record name, and verifies that the record's agent name matches the agentId, its kid matches the declared key ID, and its fp equals base64url(sha256(raw public key bytes)) without padding. All checks are offline against the pinned record — live DNS resolution (and DNSSEC) is deployment behavior outside the suite's scope.",
     spec: levelSpecBase("Level 1 DNS Verification (_a2a-identity TXT record)"),
     level: 1,
-    agentCard: agentCard("DOMAIN_VERIFIED", {
-      attestations: [
-        {
-          type: "domain",
-          domain: "example.com",
-          verifiedAt: "2026-02-17T00:00:00Z",
-          method: "DNS_TXT",
-        },
-      ],
-    }),
+    agentCard: agentCard("DOMAIN_VERIFIED", { attestations: domainAttestations() }),
     evidence: {
       dnsTxt: {
         recordName: "_a2a-identity.example.com",
@@ -756,16 +758,7 @@ function level1FingerprintMismatchFixture() {
       "Negative fixture: the DOMAIN_VERIFIED AgentCard with a DNS TXT record whose fp field is the fingerprint of a DIFFERENT Ed25519 key (RFC 8032 §7.1 Test 2). Record name, agent name, and kid all match. A conforming verifier MUST reject: the fingerprint binds the DNS record to the exact public key bytes, and a mismatch means the domain owner did not endorse this key. Models an agent presenting a key the domain never authorized.",
     spec: levelSpecBase("Level 1 DNS Verification (fingerprint binding)"),
     level: 1,
-    agentCard: agentCard("DOMAIN_VERIFIED", {
-      attestations: [
-        {
-          type: "domain",
-          domain: "example.com",
-          verifiedAt: "2026-02-17T00:00:00Z",
-          method: "DNS_TXT",
-        },
-      ],
-    }),
+    agentCard: agentCard("DOMAIN_VERIFIED", { attestations: domainAttestations() }),
     evidence: {
       dnsTxt: {
         recordName: "_a2a-identity.example.com",
@@ -773,6 +766,85 @@ function level1FingerprintMismatchFixture() {
       },
     },
     expected: { verifyResult: "REJECT", rejectCategory: "FINGERPRINT_MISMATCH" },
+  };
+}
+
+function level1DomainMismatchFixture() {
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+    name: "levels/level-1-domain-mismatch",
+    description:
+      "Negative fixture: the DOMAIN_VERIFIED AgentCard served from provider.url https://example.com, with a matching domain attestation and a valid DNS TXT record at _a2a-identity.example.com, but an agentId that claims a different domain (urn:a2a:agent:example.org:financial-advisor:v2). The agentId is a well-formed URN and the record's agent name, kid, and fingerprint all match. A conforming verifier MUST reject: the domain that endorsed the key is not the domain the agent identifier claims. Models an agent asserting an identifier under a domain it does not control while presenting another domain's record.",
+    spec: levelSpecBase("Level 1 DNS Verification (agentId domain binding)"),
+    level: 1,
+    agentCard: agentCard("DOMAIN_VERIFIED", {
+      agentId: "urn:a2a:agent:example.org:financial-advisor:v2",
+      attestations: domainAttestations(),
+    }),
+    evidence: {
+      dnsTxt: {
+        recordName: "_a2a-identity.example.com",
+        recordValue: dnsTxtRecordValue(agentFingerprint()),
+      },
+    },
+    expected: { verifyResult: "REJECT", rejectCategory: "DOMAIN_MISMATCH" },
+  };
+}
+
+function level1AgentMismatchFixture() {
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+    name: "levels/level-1-agent-mismatch",
+    description:
+      "Negative fixture: the DOMAIN_VERIFIED AgentCard with a DNS TXT record whose agent field names a different agent under the same domain (agent=payments-bot, while the agentId names financial-advisor). Record name, kid, and fingerprint all match. A conforming verifier MUST reject: the domain owner endorsed this key for a different agent name. Models one agent reusing a record the domain published for another of its agents.",
+    spec: levelSpecBase("Level 1 DNS Verification (agent name binding)"),
+    level: 1,
+    agentCard: agentCard("DOMAIN_VERIFIED", { attestations: domainAttestations() }),
+    evidence: {
+      dnsTxt: {
+        recordName: "_a2a-identity.example.com",
+        recordValue: dnsTxtRecordValue(agentFingerprint(), { agent: "payments-bot" }),
+      },
+    },
+    expected: { verifyResult: "REJECT", rejectCategory: "AGENT_MISMATCH" },
+  };
+}
+
+function level1KidMismatchFixture() {
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+    name: "levels/level-1-kid-mismatch",
+    description:
+      "Negative fixture: the DOMAIN_VERIFIED AgentCard with a DNS TXT record whose kid field (agent-e5f6a7b8) differs from the declared publicKey.kid (agent-a1b2c3d4). Record name, agent name, and fingerprint all match. A conforming verifier MUST reject on the key ID binding before computing the fingerprint: the record endorses a key under a different identifier than the one the AgentCard declares. Models a card whose declared key ID drifted from the published record, for example after a key rotation that was not reflected in DNS.",
+    spec: levelSpecBase("Level 1 DNS Verification (kid binding)"),
+    level: 1,
+    agentCard: agentCard("DOMAIN_VERIFIED", { attestations: domainAttestations() }),
+    evidence: {
+      dnsTxt: {
+        recordName: "_a2a-identity.example.com",
+        recordValue: dnsTxtRecordValue(agentFingerprint(), { kid: "agent-e5f6a7b8" }),
+      },
+    },
+    expected: { verifyResult: "REJECT", rejectCategory: "KID_MISMATCH" },
+  };
+}
+
+function level1MultiDefectFixture() {
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+    name: "levels/level-1-multi-defect-domain-and-version",
+    description:
+      "Check-order fixture with two defects: the DNS TXT record was published at _a2a-identity.example.net while provider.url is https://example.com (a DOMAIN_MISMATCH), and the record carries an unsupported version v=a2a9 (a SHAPE_INVALID). The record-name binding check precedes the record-version shape check in the contract order, so a conforming verifier MUST reject with DOMAIN_MISMATCH. A verifier that runs every shape check before any binding check reports SHAPE_INVALID and fails this fixture.",
+    spec: levelSpecBase("Level 1 DNS Verification (check order: record name before record version)"),
+    level: 1,
+    agentCard: agentCard("DOMAIN_VERIFIED", { attestations: domainAttestations() }),
+    evidence: {
+      dnsTxt: {
+        recordName: "_a2a-identity.example.net",
+        recordValue: dnsTxtRecordValue(agentFingerprint(), { v: "a2a9" }),
+      },
+    },
+    expected: { verifyResult: "REJECT", rejectCategory: "DOMAIN_MISMATCH" },
   };
 }
 
@@ -903,6 +975,82 @@ function level2NonBmpKeysFixture() {
   };
 }
 
+function level2NotYetValidFixture() {
+  const attestation = signedOrgAttestation({
+    verifiedAt: "2026-09-01T00:00:00Z",
+    expiresAt: "2027-09-01T00:00:00Z",
+  });
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+    name: "levels/level-2-attestation-not-yet-valid",
+    description:
+      "Negative fixture: an ORGANIZATION_VERIFIED attestation whose registry signature is VALID but whose validity window starts after the pinned validationTime (verifiedAt 2026-09-01 > validationTime 2026-07-03). Every other field is well-formed and correctly bound. A conforming verifier MUST reject on the validity window alone. Models an attestation presented before its issuer-stated start time; the fixture pins validationTime so the decision never depends on the wall clock.",
+    spec: [
+      SPEC_IDF_LEVELS("§1 Organization Verification (validity window)"),
+      SPEC_RFC8785("JCS canonical form (attestation signing input)"),
+      SPEC_RFC8032("§7.1 Test 2 (registry issuer key)"),
+    ],
+    level: 2,
+    agentCard: agentCard("ORGANIZATION_VERIFIED", { attestations: [attestation] }),
+    evidence: {
+      issuerPublicKey: issuerPublicKeyJwk(),
+      validationTime: VALIDATION_TIME,
+    },
+    expected: { verifyResult: "REJECT", rejectCategory: "NOT_YET_VALID" },
+  };
+}
+
+function level2SubjectMismatchFixture() {
+  const attestation = signedOrgAttestation({
+    verifiedAt: "2026-02-17T00:00:00Z",
+    expiresAt: "2027-02-17T00:00:00Z",
+    subjectAgentId: "urn:a2a:agent:example.com:payments-bot:v1",
+  });
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+    name: "levels/level-2-subject-mismatch",
+    description:
+      "Negative fixture: an ORGANIZATION_VERIFIED AgentCard carrying a registry attestation that is validly signed and inside its validity window, but whose subject.agentId names a different agent of the same organization (urn:a2a:agent:example.com:payments-bot:v1). subject.kid matches the declared key ID. A conforming verifier MUST reject: the attestation does not bind to the declared agentId. Models replay of an attestation the registry issued to another agent.",
+    spec: [
+      SPEC_IDF_LEVELS("§1 Organization Verification (attestation subject binding)"),
+      SPEC_RFC8785("JCS canonical form (attestation signing input)"),
+      SPEC_RFC8032("§7.1 Test 2 (registry issuer key)"),
+    ],
+    level: 2,
+    agentCard: agentCard("ORGANIZATION_VERIFIED", { attestations: [attestation] }),
+    evidence: {
+      issuerPublicKey: issuerPublicKeyJwk(),
+      validationTime: VALIDATION_TIME,
+    },
+    expected: { verifyResult: "REJECT", rejectCategory: "SUBJECT_MISMATCH" },
+  };
+}
+
+function level2MultiDefectFixture() {
+  const attestation = signedOrgAttestation({
+    verifiedAt: "2026-02-17T00:00:00Z",
+    expiresAt: "2027-02-17T00:00:00Z",
+    subjectKid: "agent-e5f6a7b8",
+  });
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+    name: "levels/level-2-multi-defect-subject-and-evidence",
+    description:
+      "Check-order fixture with two defects: the validly signed attestation's subject.kid (agent-e5f6a7b8) does not match the declared publicKey.kid (agent-a1b2c3d4), a SUBJECT_MISMATCH, and evidence omits validationTime, a SHAPE_INVALID. The subject binding check precedes the evidence shape check in the contract order, so a conforming verifier MUST reject with SUBJECT_MISMATCH. A verifier that runs every shape check before any binding check reports SHAPE_INVALID and fails this fixture.",
+    spec: [
+      SPEC_IDF_LEVELS("§1 Organization Verification (check order: subject binding before evidence shape)"),
+      SPEC_RFC8785("JCS canonical form (attestation signing input)"),
+      SPEC_RFC8032("§7.1 Test 2 (registry issuer key)"),
+    ],
+    level: 2,
+    agentCard: agentCard("ORGANIZATION_VERIFIED", { attestations: [attestation] }),
+    evidence: {
+      issuerPublicKey: issuerPublicKeyJwk(),
+    },
+    expected: { verifyResult: "REJECT", rejectCategory: "SUBJECT_MISMATCH" },
+  };
+}
+
 // --- keypair vectors ---------------------------------------------------------------
 
 function keypairVector(kp, { name, test, role }) {
@@ -958,10 +1106,17 @@ const FILES = {
   "fixtures/levels/level-0-agent-id-malformed.json": level0MalformedFixture(),
   "fixtures/levels/level-1-domain-verified.json": level1Fixture(),
   "fixtures/levels/level-1-fingerprint-mismatch.json": level1FingerprintMismatchFixture(),
+  "fixtures/levels/level-1-domain-mismatch.json": level1DomainMismatchFixture(),
+  "fixtures/levels/level-1-agent-mismatch.json": level1AgentMismatchFixture(),
+  "fixtures/levels/level-1-kid-mismatch.json": level1KidMismatchFixture(),
+  "fixtures/levels/level-1-multi-defect-domain-and-version.json": level1MultiDefectFixture(),
   "fixtures/levels/level-2-organization-verified.json": level2Fixture(),
   "fixtures/levels/level-2-attestation-tampered.json": level2TamperedFixture(),
   "fixtures/levels/level-2-attestation-expired.json": level2ExpiredFixture(),
   "fixtures/levels/level-2-attestation-non-bmp-keys.json": level2NonBmpKeysFixture(),
+  "fixtures/levels/level-2-attestation-not-yet-valid.json": level2NotYetValidFixture(),
+  "fixtures/levels/level-2-subject-mismatch.json": level2SubjectMismatchFixture(),
+  "fixtures/levels/level-2-multi-defect-subject-and-evidence.json": level2MultiDefectFixture(),
 };
 
 function assertEqual(actual, expected, what) {
