@@ -117,6 +117,87 @@ test("does not guess the directory of a cd it cannot resolve", (t) => {
   assert.match(result.stdout, /^summary: 1 paths checked, 1 broken$/m);
 });
 
+test("follows a cd that carries a redirection or a trailing comment, not one with a second operand", (t) => {
+  const root = scratchRepo(t, {
+    "fixtures/levels/README.md": "# Levels\n",
+    "README.md": [
+      "# Demo",
+      "",
+      "```bash",
+      "cd fixtures/levels 2>/dev/null && node ../../scripts/nope.mjs",
+      "cd fixtures/levels > /dev/null 2>&1 && node ../../scripts/check-doc-links.mjs",
+      "cd fixtures/levels # the level fixtures",
+      "cd 2>/dev/null -- fixtures/levels && node ../../scripts/gone.mjs",
+      "cd fixtures/levels extra && node ../../scripts/elsewhere.mjs",
+      "cd fixtures/levels 2> && node ../../scripts/elsewhere.mjs",
+      "```",
+      "",
+    ].join("\n"),
+  });
+  const result = runCheck(root);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stdout, /^FAIL {2}README\.md:4 {2}command script \.\.\/\.\.\/scripts\/nope\.mjs \(not found from fixtures\/levels\/\)$/m);
+  assert.match(result.stdout, /^FAIL {2}README\.md:7 {2}command script \.\.\/\.\.\/scripts\/gone\.mjs \(not found from fixtures\/levels\/\)$/m);
+  assert.doesNotMatch(result.stdout, /elsewhere/);
+  assert.match(result.stdout, /^summary: 3 paths checked, 2 broken$/m);
+});
+
+test("splits at parentheses in shell blocks only, and does not read a comment", (t) => {
+  const root = scratchRepo(t, {
+    "README.md": [
+      "# Demo",
+      "",
+      "```js",
+      "console.log(node scripts/nope.mjs)",
+      "```",
+      "",
+      "```",
+      "case $x in a) node scripts/nope.mjs ;; esac",
+      "# (node scripts/nope.mjs)",
+      "```",
+      "",
+      "```bash",
+      "# (node scripts/nope.mjs)",
+      "node scripts/check-doc-links.mjs # ; node scripts/nope.mjs",
+      "echo '#' && node scripts/quoted.mjs",
+      "echo a#b; node scripts/word.mjs",
+      "(node scripts/check-doc-links.mjs)",
+      "```",
+      "",
+    ].join("\n"),
+  });
+  const result = runCheck(root);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.doesNotMatch(result.stdout, /nope\.mjs/);
+  assert.match(result.stdout, /^FAIL {2}README\.md:15 {2}command script scripts\/quoted\.mjs /m);
+  assert.match(result.stdout, /^FAIL {2}README\.md:16 {2}command script scripts\/word\.mjs /m);
+  assert.match(result.stdout, /^summary: 4 paths checked, 2 broken$/m);
+});
+
+// Without the bounds, each line below takes seconds to minutes: every `cd`
+// resolves a path that grows with the line, and open subshells keep them all.
+test("bounds the cd steps followed on a long line", (t) => {
+  const root = scratchRepo(t, {
+    "README.md": [
+      "# Demo",
+      "",
+      "```bash",
+      `${"cd a; ".repeat(35_000)}node scripts/nope.mjs`,
+      `${"(cd a && ".repeat(25_000)}node scripts/nope.mjs`,
+      `cd ${"d/".repeat(100_000)}; ${"node a.mjs; ".repeat(20_000)}`,
+      `${"cd a; ".repeat(32)}node ${"../".repeat(32)}scripts/check-doc-links.mjs`,
+      `${"cd a; ".repeat(33)}node ${"../".repeat(33)}scripts/check-doc-links.mjs`,
+      "```",
+      "",
+    ].join("\n"),
+  });
+  const started = Date.now();
+  const result = runCheck(root, { timeout: 3_000 });
+  assert.equal(result.error, undefined, `link check did not finish within 3 s (${Date.now() - started} ms)`);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /^summary: 1 paths checked, 0 broken$/m);
+});
+
 test("scans a long line of link-like text in linear time", (t) => {
   const root = scratchRepo(t, {
     "README.md": ["# Demo", "", "[a](".repeat(40_000), "", "[".repeat(80_000), "", "[ok](./README.md)", ""].join("\n"),

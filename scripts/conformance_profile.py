@@ -180,12 +180,33 @@ def fixture_type(rel: Path) -> str:
 
 
 # Every requirement entry is derived from these fixture fields, so a fixture
-# without one cannot be profiled.
-REQUIRED_FIXTURE_FIELDS = ("name", "description", "spec", "expected")
+# without one, or with one of another JSON type, cannot be profiled.
+REQUIRED_FIXTURE_FIELDS = {
+    "name": (str, "a string"),
+    "description": (str, "a string"),
+    "spec": (list, "a JSON array"),
+    "expected": (dict, "a JSON object"),
+}
 
 
 class FixtureError(Exception):
-    """A fixture lacks a field the profile is derived from; one line per fixture."""
+    """A fixture lacks a field the profile is derived from, or has one of the
+    wrong type; one line per fixture."""
+
+
+def fixture_field_error(fx: object) -> str | None:
+    """The one-line reason a fixture cannot be profiled, or None."""
+    if not isinstance(fx, dict):
+        return "is not a JSON object"
+    missing = [f'"{field}"' for field in REQUIRED_FIXTURE_FIELDS if field not in fx]
+    if missing:
+        return f"missing required field{'s' if len(missing) > 1 else ''} " + ", ".join(missing)
+    wrong = [
+        f'required field "{field}" is not {label}'
+        for field, (kind, label) in REQUIRED_FIXTURE_FIELDS.items()
+        if not isinstance(fx[field], kind)
+    ]
+    return "; ".join(wrong) or None
 
 
 def build() -> dict:
@@ -195,12 +216,9 @@ def build() -> dict:
     for path in sorted(fixtures_root.rglob("*.json")):
         rel = path.relative_to(fixtures_root)
         fx = json.loads(path.read_text())
-        missing = [f'"{field}"' for field in REQUIRED_FIXTURE_FIELDS if field not in fx]
-        if missing:
-            errors.append(
-                f"fixtures/{rel.as_posix()}: missing required field{'s' if len(missing) > 1 else ''} "
-                + ", ".join(missing)
-            )
+        error = fixture_field_error(fx)
+        if error is not None:
+            errors.append(f"fixtures/{rel.as_posix()}: {error}")
             continue
         expected = fx["expected"]
         outcome = expected.get("verifyResult", "ACCEPT")
