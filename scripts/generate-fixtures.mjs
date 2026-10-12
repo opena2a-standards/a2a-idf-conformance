@@ -712,6 +712,48 @@ function signatureTagForeignFixture() {
   };
 }
 
+// signature-tag-foreign verifies, so a verifier rejects it with TAG_MISMATCH
+// whether it applies the tag rule before or after the Ed25519 check. This one
+// adds an altered signature: only the order "tag rule first" gives TAG_MISMATCH.
+function signatureTagForeignTamperedFixture() {
+  const params = { ...PARAMS_V1, tag: FOREIGN_TAG };
+  const valid = expectedBlock(INPUT_V1, params, TEST1);
+  const tamperedSig = "Y" + valid.signatureBase64.slice(1);
+  assertEqual(
+    cryptoVerify(
+      null,
+      Buffer.from(valid.signatureBase, "utf-8"),
+      TEST1.privateKey,
+      Buffer.from(tamperedSig, "base64"),
+    ),
+    false,
+    "tampered foreign-tag signature does not verify, so the fixture carries two defects",
+  );
+  const expected = expectedBlock(INPUT_V1, params, TEST1, {
+    verifyResult: "REJECT",
+    rejectCategory: "TAG_MISMATCH",
+    signatureOverride: tamperedSig,
+  });
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-composition-v1.json",
+    name: "aim-did-rfc9421/signature-tag-foreign-tampered",
+    description: `Check-order fixture with two defects: the signature-alone request carries tag="${FOREIGN_TAG}" (a TAG_MISMATCH) and its Ed25519 signature bytes are altered in the first base64 character (a SIGNATURE_INVALID). The §4.3 tag rule is an application requirement on the signature parameters and is applied before key resolution and signature verification, so a conforming verifier MUST reject with TAG_MISMATCH. A verifier that checks the signature first reports SIGNATURE_INVALID and fails this fixture. signature-tag-foreign cannot pin this order: its signature verifies, so both orders reject it with TAG_MISMATCH.`,
+    spec: [
+      SPEC_A2A_IDF_S6,
+      SPEC_ENVOYS("§4.3 tag parameter"),
+      SPEC_RFC9421_APP_REQUIREMENTS,
+      SPEC_RFC9421_VERIFY,
+      SPEC_RFC8032("§7.1 Test 1 (Ed25519 keypair)"),
+      SPEC_DID_CORE,
+    ],
+    keypairRef: KEYPAIR_REF,
+    input: INPUT_V1,
+    signatureParams: params,
+    keyidResolution: keyidResolution(TEST1.multibase, TEST1.jwkX),
+    expected,
+  };
+}
+
 // --- level fixtures (A2A-IDF §1 verification levels) ------------------------------
 
 const AGENT_ID ="urn:a2a:agent:example.com:financial-advisor:v2";
@@ -829,6 +871,19 @@ function level0MalformedFixture() {
     spec: levelSpecBase("Agent Identifiers (URN format)"),
     level: 0,
     agentCard: agentCard("SELF_ASSERTED", { agentId: "financial-advisor/v2" }),
+    expected: { verifyResult: "REJECT", rejectCategory: "SHAPE_INVALID" },
+  };
+}
+
+function level0AgentIdNullFixture() {
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+    name: "levels/level-0-agent-id-null",
+    description:
+      "Negative fixture: a SELF_ASSERTED AgentCard whose agentId member is JSON null. A Level 0 card may omit agentId, but a member that is present declares an identifier, and null is not a urn:a2a:agent:{domain}:{agent-name}:{version} URN. A conforming verifier MUST reject the declaration shape. A verifier that reads a null member as an absent one accepts the card and fails this fixture.",
+    spec: levelSpecBase("Agent Identifiers (declared agentId with a null value)"),
+    level: 0,
+    agentCard: agentCard("SELF_ASSERTED", { agentId: null }),
     expected: { verifyResult: "REJECT", rejectCategory: "SHAPE_INVALID" },
   };
 }
@@ -991,6 +1046,171 @@ function level1IdnProviderUrlFixture() {
   };
 }
 
+function level1AttestationsNotArrayFixture() {
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+    name: "levels/level-1-attestations-not-array",
+    description:
+      "Negative fixture: the DOMAIN_VERIFIED AgentCard whose attestations member is the domain attestation object itself, not an array holding it. Every other field, and the pinned DNS TXT record, is valid. A conforming verifier MUST reject at the shape stage: a value that is not an array carries no attestation, so the card has no domain attestation. A verifier that searches the value without checking its type raises instead of reaching a verdict and fails this fixture.",
+    spec: levelSpecBase("Level 1 DNS Verification (attestations array shape)"),
+    level: 1,
+    agentCard: agentCard("DOMAIN_VERIFIED", { attestations: domainAttestations()[0] }),
+    evidence: {
+      dnsTxt: {
+        recordName: "_a2a-identity.example.com",
+        recordValue: dnsTxtRecordValue(agentFingerprint()),
+      },
+    },
+    expected: { verifyResult: "REJECT", rejectCategory: "SHAPE_INVALID" },
+  };
+}
+
+// --- level 1: how the provider domain is derived from provider.url ------------------
+// The provider domain is the host the WHATWG URL parser reports. Each fixture
+// below sets one provider.url and binds the attestation domain, the agentId
+// domain and the DNS record name to `domain`.
+
+const SPEC_WHATWG_URL = (section) => ({
+  id: "WHATWG URL",
+  ref: "https://url.spec.whatwg.org/",
+  section,
+});
+
+// The host `new URL(url)` reports for a string, or null where it throws or finds
+// none. A value that is not a string has no host (new URL() would coerce it).
+function whatwgHost(url) {
+  if (typeof url !== "string") return null;
+  try {
+    return new URL(url).hostname || null;
+  } catch {
+    return null;
+  }
+}
+
+function providerUrlFixture({ file, description, specDetail, whatwgSection, providerUrl, providerDomain, domain = "example.com", expected }) {
+  assertEqual(whatwgHost(providerUrl), providerDomain, `${file}: provider domain of ${providerUrl}`);
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+    name: `levels/${file}`,
+    description,
+    spec: [
+      ...levelSpecBase(`Level 1 DNS Verification (${specDetail})`),
+      ...(whatwgSection ? [SPEC_WHATWG_URL(whatwgSection)] : []),
+    ],
+    level: 1,
+    agentCard: agentCard("DOMAIN_VERIFIED", {
+      agentId: `urn:a2a:agent:${domain}:financial-advisor:v2`,
+      providerUrl,
+      attestations: [
+        {
+          type: "domain",
+          domain,
+          verifiedAt: "2026-02-17T00:00:00Z",
+          method: "DNS_TXT",
+        },
+      ],
+    }),
+    evidence: {
+      dnsTxt: {
+        recordName: `_a2a-identity.${domain}`,
+        recordValue: dnsTxtRecordValue(agentFingerprint()),
+      },
+    },
+    expected,
+  };
+}
+
+function level1ProviderUrlNotStringFixture() {
+  return providerUrlFixture({
+    file: "level-1-provider-url-not-string",
+    description:
+      "Negative fixture: the DOMAIN_VERIFIED AgentCard whose provider.url is an array holding the URL string https://example.com, not the string itself. The domain attestation, the agentId and the DNS TXT record all name example.com. A conforming verifier MUST reject at the shape stage: provider.url must be a string. A verifier that hands the value to a URL parser without checking its type can have it coerced to the string inside, derive example.com, and accept.",
+    specDetail: "provider.url that is not a string",
+    providerUrl: ["https://example.com"],
+    providerDomain: null,
+    expected: { verifyResult: "REJECT", rejectCategory: "SHAPE_INVALID" },
+  });
+}
+
+function level1ProviderUrlNoHostFixture() {
+  return providerUrlFixture({
+    file: "level-1-provider-url-no-host",
+    description:
+      "Negative fixture: the DOMAIN_VERIFIED AgentCard whose provider.url is mailto:ops@example.com, a URL that has no host. The domain attestation, the agentId and the DNS TXT record all name example.com. A conforming verifier MUST reject at the shape stage: provider.url yields no provider domain to bind to. A verifier that takes the empty host as the domain reports DOMAIN_MISMATCH and fails this fixture.",
+    specDetail: "provider.url without a host",
+    whatwgSection: "URL representation (a URL with an opaque path has a null host)",
+    providerUrl: "mailto:ops@example.com",
+    providerDomain: null,
+    expected: { verifyResult: "REJECT", rejectCategory: "SHAPE_INVALID" },
+  });
+}
+
+function level1ProviderUrlSpaceInHostFixture() {
+  return providerUrlFixture({
+    file: "level-1-provider-url-space-in-host",
+    description:
+      "Negative fixture: the DOMAIN_VERIFIED AgentCard whose provider.url is https://exa mple.com, with a space inside the host. A space is a forbidden host code point, so the URL does not parse. The domain attestation, the agentId and the DNS TXT record all name example.com. A conforming verifier MUST reject at the shape stage: provider.url yields no provider domain. A verifier whose URL parser returns the host with the space in it reports DOMAIN_MISMATCH and fails this fixture.",
+    specDetail: "provider.url with a forbidden host code point",
+    whatwgSection: "host parsing (forbidden domain code points)",
+    providerUrl: "https://exa mple.com",
+    providerDomain: null,
+    expected: { verifyResult: "REJECT", rejectCategory: "SHAPE_INVALID" },
+  });
+}
+
+function level1ProviderUrlPercentEncodedFixture() {
+  return providerUrlFixture({
+    file: "level-1-provider-url-percent-encoded",
+    description:
+      "Level 1 (DOMAIN_VERIFIED) with a percent-encoded provider host: provider.url is https://ex%61mple.com, where %61 is the letter a. Every binding names example.com. A conforming verifier percent-decodes the host before using it as the provider domain, as the WHATWG URL parser does, and ACCEPTs. A verifier that keeps the host as written, or refuses the percent sign, rejects and fails this fixture.",
+    specDetail: "percent-encoded provider host",
+    whatwgSection: "host parsing (percent-decoding of a domain)",
+    providerUrl: "https://ex%61mple.com",
+    providerDomain: "example.com",
+    expected: { verifyResult: "ACCEPT" },
+  });
+}
+
+function level1ProviderUrlBackslashAuthorityFixture() {
+  return providerUrlFixture({
+    file: "level-1-provider-url-backslash-authority",
+    description:
+      "Negative fixture: the DOMAIN_VERIFIED AgentCard whose provider.url is https://evil.example\\@example.com (one backslash before the @). In an http or https URL a backslash ends the authority exactly as a slash does, so the host is evil.example and the rest is the path. The domain attestation, the agentId and the DNS TXT record all name example.com. A conforming verifier MUST reject: the provider domain is evil.example, which no binding names. A verifier whose URL parser reads the text before the @ as credentials derives example.com and accepts a card served from another host.",
+    specDetail: "backslash in the provider.url authority",
+    whatwgSection: "URL parsing (authority state: a backslash ends the authority of a special scheme)",
+    providerUrl: "https://evil.example\\@example.com",
+    providerDomain: "evil.example",
+    expected: { verifyResult: "REJECT", rejectCategory: "DOMAIN_MISMATCH" },
+  });
+}
+
+function level1ProviderUrlIgnoredCodePointFixture() {
+  return providerUrlFixture({
+    file: "level-1-provider-url-ignored-code-point",
+    description:
+      "Level 1 (DOMAIN_VERIFIED) with a soft hyphen (U+00AD) in the provider host: provider.url is https://example.com with that code point between exam and ple, written as a JSON Unicode escape in this file. UTS #46 maps the soft hyphen to nothing, so the provider domain is example.com, which every binding names. A conforming verifier drops the ignored code point when it converts the domain to ASCII, as the WHATWG URL parser does, and ACCEPTs. A verifier that Punycode-encodes the label with the soft hyphen in it derives xn--example-oka.com and reports a spurious DOMAIN_MISMATCH.",
+    specDetail: "ignored code point in the provider host",
+    whatwgSection: "domain to ASCII (UTS #46 ignored code points)",
+    providerUrl: "https://exam\u00adple.com",
+    providerDomain: "example.com",
+    expected: { verifyResult: "ACCEPT" },
+  });
+}
+
+function level1ProviderUrlIpv4NumberFixture() {
+  return providerUrlFixture({
+    file: "level-1-provider-url-ipv4-number",
+    description:
+      "Negative fixture: the DOMAIN_VERIFIED AgentCard whose provider.url is https://0x7f.0.0.1, while the domain attestation, the agentId and the DNS TXT record name all spell the host the same way, 0x7f.0.0.1. A host whose last label is a number is an IPv4 address, and the WHATWG URL parser reports it in dotted-decimal form: the provider domain is 127.0.0.1. A conforming verifier MUST reject: no binding names 127.0.0.1. A verifier that compares the host as written accepts, and so treats two spellings of one address as two domains.",
+    specDetail: "numeric provider host",
+    whatwgSection: "host parsing (IPv4 parser)",
+    providerUrl: "https://0x7f.0.0.1",
+    providerDomain: "127.0.0.1",
+    domain: "0x7f.0.0.1",
+    expected: { verifyResult: "REJECT", rejectCategory: "DOMAIN_MISMATCH" },
+  });
+}
+
 function issuerPublicKeyJwk() {
   return { kty: "OKP", crv: "Ed25519", x: TEST2.jwkX, kid: ISSUER_KID };
 }
@@ -1145,17 +1365,63 @@ function level2IssuerNotObjectFixture() {
   };
 }
 
-function level2JcsUtf16KeyOrderFixture() {
+function level2VerifiedAtNotStringFixture() {
   const attestation = signedOrgAttestation({
     verifiedAt: "2026-02-17T00:00:00Z",
     expiresAt: "2027-02-17T00:00:00Z",
-    extra: { annotations: RFC8785_SORTING_EXAMPLE },
+    tamper: (att) => {
+      att.verifiedAt = [att.verifiedAt];
+    },
+  });
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+    name: "levels/level-2-verified-at-not-string",
+    description:
+      "Negative fixture: an ORGANIZATION_VERIFIED attestation whose verifiedAt is an array holding the timestamp string, not the string itself. Every other field is well-formed. A conforming verifier MUST reject at the shape stage: verifiedAt must be a string in YYYY-MM-DDTHH:MM:SSZ form. A verifier that tests the value against a pattern without checking its type can coerce the array to its only element, pass the shape check, and report SIGNATURE_INVALID instead.",
+    spec: [
+      SPEC_IDF_LEVELS("§1 Organization Verification (attestation shape)"),
+      SPEC_RFC8032("§7.1 Test 2 (registry issuer key)"),
+    ],
+    level: 2,
+    agentCard: agentCard("ORGANIZATION_VERIFIED", { attestations: [attestation] }),
+    evidence: {
+      issuerPublicKey: issuerPublicKeyJwk(),
+      validationTime: VALIDATION_TIME,
+    },
+    expected: { verifyResult: "REJECT", rejectCategory: "SHAPE_INVALID" },
+  };
+}
+
+// ASCII property names whose RFC 8785 §3.2.3 order (UTF-16 code units) differs
+// from numeric order ("10" before "9") and from case-insensitive order ("B"
+// and "Z" before "_" and "a").
+const ASCII_KEY_ORDER_EXAMPLE = {
+  a: "Latin Small Letter A",
+  "9": "Digit Nine",
+  B: "Latin Capital Letter B",
+  "10": "Digits One Zero",
+  aa: "Latin Small Letter A, twice",
+  _: "Low Line",
+  Z: "Latin Capital Letter Z",
+};
+const ASCII_KEY_ORDER_SORTED = ["10", "9", "B", "Z", "_", "a", "aa"];
+
+function level2JcsUtf16KeyOrderFixture() {
+  assertEqual(
+    jcs(ASCII_KEY_ORDER_EXAMPLE),
+    `{${ASCII_KEY_ORDER_SORTED.map((k) => `${JSON.stringify(k)}:${JSON.stringify(ASCII_KEY_ORDER_EXAMPLE[k])}`).join(",")}}`,
+    "RFC 8785 §3.2.3 property sorting of ASCII names",
+  );
+  const attestation = signedOrgAttestation({
+    verifiedAt: "2026-02-17T00:00:00Z",
+    expiresAt: "2027-02-17T00:00:00Z",
+    extra: { annotations: ASCII_KEY_ORDER_EXAMPLE },
   });
   return {
     $schema: "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
     name: "levels/level-2-jcs-utf16-key-order",
     description:
-      "Level 2 (ORGANIZATION_VERIFIED) with an annotations object whose keys are the RFC 8785 §3.2.3 property-sorting example, including U+1F600 (outside the Basic Multilingual Plane) and U+FB33. JCS sorts keys by UTF-16 code units, which puts U+1F600 (surrogates D83D DE00) before U+FB33; a code-point sort reverses them. The registry signed the UTF-16 order, so a conforming verifier ACCEPTs, and a verifier that sorts by code point reconstructs a different signing input and reports a spurious SIGNATURE_INVALID.",
+      "Level 2 (ORGANIZATION_VERIFIED) with an annotations object whose ASCII property names sort differently under RFC 8785 §3.2.3 than under two common alternatives. JCS compares property names as UTF-16 code units, so 10 sorts before 9 (digits compare as characters, not as numbers) and B and Z sort before _ and a (upper case before lower case). The registry signed that order. A conforming verifier ACCEPTs; a verifier that sorts numerically, case-insensitively or by locale collation reconstructs a different signing input and reports a spurious SIGNATURE_INVALID. The non-ASCII half of the rule, code units against code points, is pinned by level-2-attestation-non-bmp-keys.",
     spec: [
       SPEC_IDF_LEVELS("§1 Organization Verification (registry attestation)"),
       SPEC_RFC8785("§3.2.3 Sorting of Object Properties (UTF-16 code units)"),
@@ -1301,8 +1567,10 @@ const FILES = {
   "fixtures/composition/aim-did-rfc9421/signature-tag-null.json": signatureTagNullFixture(),
   "fixtures/composition/aim-did-rfc9421/signature-tag-absent.json": signatureTagAbsentFixture(),
   "fixtures/composition/aim-did-rfc9421/signature-tag-foreign.json": signatureTagForeignFixture(),
+  "fixtures/composition/aim-did-rfc9421/signature-tag-foreign-tampered.json": signatureTagForeignTamperedFixture(),
   "fixtures/levels/level-0-self-asserted.json": level0Fixture(),
   "fixtures/levels/level-0-agent-id-malformed.json": level0MalformedFixture(),
+  "fixtures/levels/level-0-agent-id-null.json": level0AgentIdNullFixture(),
   "fixtures/levels/level-1-domain-verified.json": level1Fixture(),
   "fixtures/levels/level-1-fingerprint-mismatch.json": level1FingerprintMismatchFixture(),
   "fixtures/levels/level-1-domain-mismatch.json": level1DomainMismatchFixture(),
@@ -1310,6 +1578,14 @@ const FILES = {
   "fixtures/levels/level-1-kid-mismatch.json": level1KidMismatchFixture(),
   "fixtures/levels/level-1-multi-defect-domain-and-version.json": level1MultiDefectFixture(),
   "fixtures/levels/level-1-idn-provider-url.json": level1IdnProviderUrlFixture(),
+  "fixtures/levels/level-1-attestations-not-array.json": level1AttestationsNotArrayFixture(),
+  "fixtures/levels/level-1-provider-url-not-string.json": level1ProviderUrlNotStringFixture(),
+  "fixtures/levels/level-1-provider-url-no-host.json": level1ProviderUrlNoHostFixture(),
+  "fixtures/levels/level-1-provider-url-space-in-host.json": level1ProviderUrlSpaceInHostFixture(),
+  "fixtures/levels/level-1-provider-url-percent-encoded.json": level1ProviderUrlPercentEncodedFixture(),
+  "fixtures/levels/level-1-provider-url-backslash-authority.json": level1ProviderUrlBackslashAuthorityFixture(),
+  "fixtures/levels/level-1-provider-url-ignored-code-point.json": level1ProviderUrlIgnoredCodePointFixture(),
+  "fixtures/levels/level-1-provider-url-ipv4-number.json": level1ProviderUrlIpv4NumberFixture(),
   "fixtures/levels/level-2-organization-verified.json": level2Fixture(),
   "fixtures/levels/level-2-attestation-tampered.json": level2TamperedFixture(),
   "fixtures/levels/level-2-attestation-expired.json": level2ExpiredFixture(),
@@ -1318,8 +1594,15 @@ const FILES = {
   "fixtures/levels/level-2-subject-mismatch.json": level2SubjectMismatchFixture(),
   "fixtures/levels/level-2-multi-defect-subject-and-evidence.json": level2MultiDefectFixture(),
   "fixtures/levels/level-2-issuer-not-object.json": level2IssuerNotObjectFixture(),
+  "fixtures/levels/level-2-verified-at-not-string.json": level2VerifiedAtNotStringFixture(),
   "fixtures/levels/level-2-jcs-utf16-key-order.json": level2JcsUtf16KeyOrderFixture(),
 };
+
+// A soft hyphen is invisible in most editors and diffs, so a fixture that
+// carries one writes it as a JSON escape. The parsed value is the same.
+function serialize(content) {
+  return JSON.stringify(content, null, 2).replaceAll("\u00ad", "\\u00ad") + "\n";
+}
 
 function assertEqual(actual, expected, what) {
   if (actual !== expected) {
@@ -1332,7 +1615,7 @@ function main() {
   for (const [rel, content] of Object.entries(FILES)) {
     const abs = join(REPO_ROOT, rel);
     mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, JSON.stringify(content, null, 2) + "\n");
+    writeFileSync(abs, serialize(content));
     written.push(rel);
   }
 

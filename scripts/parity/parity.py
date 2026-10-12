@@ -15,7 +15,8 @@ pinned) matches the outcome pinned in the fixture itself. The pinned check
 reads the fixture directly, so it does not rely on an implementation's own
 PASS/FAIL report. The gate fails if any verifier skips a fixture the others
 saw, disagrees on gate, verdict or category, departs from the pinned outcome,
-or exits non-zero.
+or exits non-zero. It also fails when a fixture's `expected` block is not a
+JSON object, since such a fixture pins nothing.
 
 Usage:
     python3 scripts/parity/parity.py [--json parity-report.json]
@@ -57,11 +58,23 @@ VERIFIERS = {
 # `PASS  <path>`, `FAIL  <path>` or `ERROR <path>` opens a per-fixture block.
 # ERROR (the verifier raised instead of reaching a verdict) is recorded as its
 # own gate status, so it is reported as a divergence, never as a missing fixture.
-# The path runs to the end of the line, so a checkout path with spaces parses.
-BLOCK_RE = re.compile(r"^(PASS|FAIL|ERROR)\s+(.+?)\s*$")
+BLOCK_GATES = ("PASS", "FAIL", "ERROR")
 # `observed: ACCEPT` or `observed: REJECT[CATEGORY]`
 OBSERVED_RE = re.compile(r"^\s*observed:\s+(ACCEPT|REJECT\[([A-Z_]+)\])")
 VERIFIER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def parse_block_line(line: str) -> tuple[str, str] | None:
+    """(gate, path) when `line` opens a per-fixture block, else None.
+
+    The path runs to the end of the line, so a checkout path with spaces
+    parses. The line is split once, which stays linear in its length: this is
+    the output of a command named with `--verifier`, and a pattern that
+    retries every split of a long run of spaces takes quadratic time on it."""
+    parts = line.split(None, 1)
+    if len(parts) < 2 or parts[0] not in BLOCK_GATES or not line.startswith(parts[0]):
+        return None
+    return parts[0], parts[1].rstrip()
 
 
 def fixture_key(path_str: str) -> str:
@@ -100,10 +113,11 @@ def parse_output(stdout: str) -> dict[str, dict]:
     records: dict[str, dict] = {}
     current: str | None = None
     for line in stdout.splitlines():
-        m = BLOCK_RE.match(line)
-        if m:
-            current = fixture_key(m.group(2))
-            records[current] = {"gate": m.group(1), "verdict": None, "category": None}
+        block = parse_block_line(line)
+        if block:
+            gate, path = block
+            current = fixture_key(path)
+            records[current] = {"gate": gate, "verdict": None, "category": None}
             continue
         if current is None:
             continue
@@ -133,14 +147,35 @@ def run_verifier(name: str, spec: dict) -> tuple[int, dict[str, dict]]:
     return proc.returncode, records
 
 
+JSON_TYPE_NAMES = {
+    list: "an array",
+    str: "a string",
+    bool: "a boolean",
+    int: "a number",
+    float: "a number",
+    type(None): "null",
+}
+
+
+class UnusableExpectedBlock(ValueError):
+    """A fixture's `expected` member is present but is not a JSON object."""
+
+
 def pinned_outcome(path: Path) -> dict | None:
     """The fixture's pinned outcome, read the same way conformance_profile.py
     derives it. None when the fixture is not readable JSON with an `expected`
-    block; the verifiers report that fixture as ERROR."""
+    block; the verifiers report that fixture as ERROR. Raises
+    UnusableExpectedBlock when `expected` is not an object: it pins nothing,
+    while a verifier can still report PASS for the fixture."""
     try:
         expected = json.loads(path.read_text())["expected"]
     except (OSError, ValueError, KeyError, TypeError):
         return None
+    if not isinstance(expected, dict):
+        raise UnusableExpectedBlock(
+            f"`expected` is {JSON_TYPE_NAMES[type(expected)]}, not an object, "
+            "so the fixture pins no outcome"
+        )
     category = expected.get("rejectCategory")
     verdict = "REJECT" if category else expected.get("verifyResult", "ACCEPT")
     return {"verdict": verdict, "category": category}
@@ -184,7 +219,14 @@ def main() -> int:
     if not fixture_files:
         sys.stderr.write("[parity] no fixtures found\n")
         return 1
-    pinned = {fx: pinned_outcome(FIXTURES_DIR / fx) for fx in fixture_files}
+    divergences: list[str] = []
+    pinned: dict[str, dict | None] = {}
+    for fx in fixture_files:
+        try:
+            pinned[fx] = pinned_outcome(FIXTURES_DIR / fx)
+        except UnusableExpectedBlock as exc:
+            pinned[fx] = None
+            divergences.append(f"{fx}: {exc}")
 
     results: dict[str, dict[str, dict]] = {}
     exit_codes: dict[str, int] = {}
@@ -192,8 +234,6 @@ def main() -> int:
         code, records = run_verifier(name, spec)
         exit_codes[name] = code
         results[name] = records
-
-    divergences: list[str] = []
 
     for name, code in exit_codes.items():
         if code != 0:

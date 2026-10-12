@@ -37,9 +37,48 @@ const COMMAND_BOUNDARY = /(&&|[;|()])/;
 const SCRIPT_COMMAND = /^(?:\$\s+)?(?:node|python3?)\s+(\S+\.(?:mjs|cjs|js|py))(?:\s|$)/;
 const CD_COMMAND = /^(?:\$\s+)?cd(?:\s+(.*))?$/s;
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
-const SIGSTORE_DIR = /(?:^|[\s`'"(])(\.sigstore\/\S*?\/)(?=$|[\s`'")])/;
 const COSIGN_SIGN = /^\s*(?:\$\s+)?cosign\s+sign-blob\s/;
 const COSIGN_OUTPUT = /--(?:output-signature|output-certificate|bundle)(?:=|\s+)(\S+)/g;
+
+const SIGSTORE_PREFIX = ".sigstore/";
+const WORD_OPENERS = "`'\"(";
+const WORD_CLOSERS = "`'\")";
+
+// The `.sigstore/<dir>/` path a line names: it starts a word (or follows a quote,
+// backtick or opening parenthesis) and runs to the first `/` that ends the word
+// (or precedes a quote, backtick or closing parenthesis). Each word is scanned
+// once. Only its first candidate start is tried: a later start in the same word
+// could only end at a `/` the first one would have ended at too. A single
+// pattern for this retries every start against the rest of the word, which is
+// quadratic on a long line.
+function sigstoreDir(line) {
+  for (const word of line.split(/\s+/)) {
+    let start = word.indexOf(SIGSTORE_PREFIX);
+    while (start > 0 && !WORD_OPENERS.includes(word[start - 1])) {
+      start = word.indexOf(SIGSTORE_PREFIX, start + 1);
+    }
+    if (start < 0) continue;
+    let end = word.indexOf("/", start + SIGSTORE_PREFIX.length);
+    while (end >= 0 && end + 1 < word.length && !WORD_CLOSERS.includes(word[end + 1])) {
+      end = word.indexOf("/", end + 1);
+    }
+    if (end >= 0) return word.slice(start, end + 1);
+  }
+  return null;
+}
+
+// Replaces each `<placeholder>` with `example-org`, in one pass.
+function fillPlaceholders(path) {
+  let out = "";
+  let from = 0;
+  for (;;) {
+    const open = path.indexOf("<", from);
+    const close = open < 0 ? -1 : path.indexOf(">", open + 1);
+    if (close < 0) return out + path.slice(from);
+    out += `${path.slice(from, open)}example-org`;
+    from = close + 1;
+  }
+}
 
 // Joins `\`-continued shell lines so each entry is one whole command.
 function commands(block) {
@@ -61,9 +100,9 @@ function commands(block) {
 function checkCosignOutputs(block) {
   const broken = [];
   let checked = 0;
-  const dirMatch = block.map(({ text }) => text.match(SIGSTORE_DIR)).find(Boolean);
-  if (!dirMatch) return { checked, broken };
-  const commitDir = dirMatch[1].replace(/<[^>]*>/g, "example-org");
+  const dir = block.map(({ text }) => sigstoreDir(text)).find(Boolean);
+  if (!dir) return { checked, broken };
+  const commitDir = fillPlaceholders(dir);
 
   for (const cmd of commands(block)) {
     if (!COSIGN_SIGN.test(cmd.text)) continue;
