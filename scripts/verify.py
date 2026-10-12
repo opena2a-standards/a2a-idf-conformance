@@ -384,17 +384,38 @@ def _jcs(value: Any) -> str:
     RFC 8785 §3.2.3 orders property names by UTF-16 code units. Python's
     default str ordering is by code point, which disagrees once a key holds a
     character above U+FFFF (a surrogate pair, D800-DFFF) and another holds one
-    in U+E000-U+FFFF, so the sort key is the UTF-16BE encoding."""
-    if isinstance(value, list):
-        return "[" + ",".join(_jcs(v) for v in value) + "]"
-    if isinstance(value, dict):
-        return "{" + ",".join(
-            f"{json.dumps(k, ensure_ascii=False)}:{_jcs(value[k])}"
-            for k in sorted(value, key=_utf16_sort_key)
-        ) + "}"
-    if isinstance(value, str):
-        return json.dumps(value, ensure_ascii=False)
-    raise ValueError(f"value type outside the fixture JCS domain: {type(value).__name__}")
+    in U+E000-U+FFFF, so the sort key is the UTF-16BE encoding.
+
+    The walk keeps its own stack instead of recursing, so a deeply nested
+    member reaches a verdict here and in verify.mjs rather than exceeding the
+    recursion limit. Each stack entry is (is_text, item): output text, or a
+    value still to be written."""
+    out: list[str] = []
+    todo: list[tuple[bool, Any]] = [(False, value)]
+    while todo:
+        is_text, item = todo.pop()
+        if is_text:
+            out.append(item)
+        elif isinstance(item, list):
+            entries: list[tuple[bool, Any]] = [(True, "[")]
+            for i, v in enumerate(item):
+                if i:
+                    entries.append((True, ","))
+                entries.append((False, v))
+            entries.append((True, "]"))
+            todo.extend(reversed(entries))
+        elif isinstance(item, dict):
+            entries = [(True, "{")]
+            for i, k in enumerate(sorted(item, key=_utf16_sort_key)):
+                entries.append((True, ("," if i else "") + json.dumps(k, ensure_ascii=False) + ":"))
+                entries.append((False, item[k]))
+            entries.append((True, "}"))
+            todo.extend(reversed(entries))
+        elif isinstance(item, str):
+            out.append(json.dumps(item, ensure_ascii=False))
+        else:
+            raise ValueError(f"value type outside the fixture JCS domain: {type(item).__name__}")
+    return "".join(out)
 
 
 def _is_nonempty_str(v: Any) -> bool:
@@ -441,13 +462,19 @@ _SURROGATE = re.compile("[\ud800-\udfff]")
 
 def _has_lone_surrogate(value: Any) -> bool:
     """True when a string or property name anywhere in `value` holds a lone
-    surrogate, which has no UTF-8 encoding and which RFC 8785 §3.2.2.2 forbids."""
-    if isinstance(value, str):
-        return _SURROGATE.search(value) is not None
-    if isinstance(value, list):
-        return any(_has_lone_surrogate(v) for v in value)
-    if isinstance(value, dict):
-        return any(_has_lone_surrogate(k) or _has_lone_surrogate(v) for k, v in value.items())
+    surrogate, which has no UTF-8 encoding and which RFC 8785 §3.2.2.2 forbids.
+    Iterative for the reason given in _jcs."""
+    todo = [value]
+    while todo:
+        item = todo.pop()
+        if isinstance(item, str):
+            if _SURROGATE.search(item) is not None:
+                return True
+        elif isinstance(item, list):
+            todo.extend(item)
+        elif isinstance(item, dict):
+            todo.extend(item.keys())
+            todo.extend(item.values())
     return False
 
 
@@ -461,7 +488,9 @@ _HOST_LABEL_SEPARATORS = re.compile(
 # Code points UTS #46 maps to nothing ("ignored"): the soft hyphen, zero width
 # space, word joiner, variation selectors and other invisible format characters.
 # This is the set the WHATWG URL parser of Node 26 removes from a domain; a
-# parser built on older UTS #46 data rejects some of the later additions instead.
+# parser built on older UTS #46 data rejects some of the later additions instead
+# (Node 22 refuses 24 of them, U+115F and U+3164 among them). Agreement with
+# verify.mjs on such a host is stated for Node 26; see fixtures/levels/README.md.
 _UTS46_IGNORED = re.compile(
     "[\u00ad\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b\u2060-\u2064"
     "\u206a-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0"

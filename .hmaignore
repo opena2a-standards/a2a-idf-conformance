@@ -1,0 +1,4 @@
+# hackmyagent scan scope. See vectors/README.md: the `private` members of the
+# RFC 8032 vector files are the published RFC 8032 section 7.1 test keys.
+vectors/rfc8032-7-1.json:AST-CRED-003 # published RFC 8032 test key, not a secret
+vectors/rfc8032-7-1-test2.json:AST-CRED-003 # published RFC 8032 test key, not a secret

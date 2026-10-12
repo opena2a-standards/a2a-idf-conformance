@@ -96,3 +96,20 @@ for (const [label, field, mutate] of [
     assert.equal(outcomes.python, outcomes.node);
   });
 }
+
+// A fixture path that does not exist is an ERROR fixture with a summary line,
+// not an uncaught exception. The message wording is each runtime's own.
+test("a fixture path that does not exist is reported as ERROR by both verifiers", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "verify-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, "missing.json");
+  for (const [name, argv] of Object.entries(VERIFIERS)) {
+    const result = runVerifier(argv, path);
+    assert.equal(result.status, 1, `${name}: ${result.stdout}${result.stderr}`);
+    assert.equal(result.stderr, "", name);
+    const lines = result.stdout.split("\n");
+    assert.match(lines[0], /^ERROR .*missing\.json$/, name);
+    assert.match(lines[1], /^ {6}.*no such file or directory.*missing\.json/i, name);
+    assert.deepEqual(lines.slice(2), ["summary: 0 pass, 1 fail (1 fixtures)", ""], name);
+  }
+});

@@ -175,10 +175,30 @@ the way the parser reports it:
 
 `scripts/verify.py` follows the URL Standard for all of the above without a
 URL-parsing dependency. Its conversion of a non-ASCII host to an A-label is an
-approximation: it does not make the UTS #46 validity checks, so for a host
-those checks refuse (a disallowed code point, a joiner out of context, a Bidi
-rule violation) it reports a Punycode form where `scripts/verify.mjs` reports
-no host. No fixture depends on that difference.
+approximation, so for some non-ASCII hosts the two verifiers report different
+provider domains. No fixture depends on either difference:
+
+- It does not make the UTS #46 validity checks. For a host those checks
+  refuse (a disallowed code point, a joiner out of context, a Bidi rule
+  violation) it reports a host where `scripts/verify.mjs` reports none. That
+  host is usually a Punycode form and can be plain ASCII: `https://a` +
+  U+2024 ONE DOT LEADER + `b.com` gives `a.b.com`, because NFKC maps U+2024
+  to a full stop, while `new URL()` refuses the URL.
+- It maps a label with NFKC and lowercasing, not with the UTS #46 mapping
+  table. Where the two map a code point differently, both verifiers report a
+  host and the hosts differ: `https://a` + U+13A0 CHEROKEE LETTER A + `b.com`
+  gives `xn--ab-5f1i.com` from `verify.py`, which lowercases U+13A0 to U+AB70,
+  and `xn--ab-y8l.com` from `verify.mjs`, which keeps U+13A0.
+
+The UTS #46 data `verify.py` follows is that of Node 26: the code points it
+drops from a domain are the set the URL parser of Node 26 removes. Node 22,
+which `.github/workflows/conformance.yml` pins, has older data. It refuses a
+URL whose host holds 24 of those code points (U+115F and U+3164 among them),
+where Node 26 and `verify.py` drop the code point; it refuses other code points
+that later UTS #46 data maps or allows; and it maps U+1E9E to `ss` where Node 26
+and `verify.py` give `ß`. Every fixture has the same outcome on both versions.
+On a non-ASCII host outside the fixtures, agreement between the verifiers is
+stated for Node 26.
 
 ## JCS note
 

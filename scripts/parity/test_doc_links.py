@@ -9,11 +9,13 @@ case runs a copy of it inside a throwaway git repository. Needs Node and git.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parent.parent / "check-doc-links.mjs"
 
@@ -31,18 +33,28 @@ cosign sign-blob MANIFEST.sha256 \\
 """
 
 
+def git_env(root: Path) -> dict[str, str]:
+    """Keep git inside the scratch directory: no repository above it, and no
+    GIT_DIR, work tree or index inherited from the caller."""
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
+    env["GIT_CEILING_DIRECTORIES"] = str(root.parent)
+    return env
+
+
 def run_check(files: dict[str, str], timeout: int = 120) -> subprocess.CompletedProcess:
     with tempfile.TemporaryDirectory() as tmp:
         repo = Path(tmp)
+        env = git_env(repo)
         (repo / "scripts").mkdir()
         shutil.copy(SCRIPT, repo / "scripts" / SCRIPT.name)
         for name, text in files.items():
             (repo / name).write_text(text)
         for command in (["git", "init", "-q"], ["git", "add", "--", *files]):
-            subprocess.run(command, cwd=repo, check=True, capture_output=True)
+            subprocess.run(command, cwd=repo, env=env, check=True, capture_output=True)
         return subprocess.run(
             ["node", str(repo / "scripts" / SCRIPT.name)],
             cwd=repo,
+            env=env,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -110,6 +122,24 @@ class SigstoreDirectoryTests(unittest.TestCase):
         proc = run_check({"LONG.md": doc}, timeout=60)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("summary: 0 paths checked, 0 broken", proc.stdout)
+
+
+class GitEnvironmentTests(unittest.TestCase):
+    def test_caller_git_variables_do_not_reach_the_scratch_repository(self):
+        # A caller inside a git hook or worktree can carry these variables. The
+        # scratch repository must not be created at, or staged into, theirs.
+        with tempfile.TemporaryDirectory() as other:
+            git_dir = Path(other) / "caller.git"
+            index = Path(other) / "caller-index"
+            caller = {"GIT_DIR": str(git_dir), "GIT_INDEX_FILE": str(index), "GIT_WORK_TREE": other}
+            with mock.patch.dict(os.environ, caller):
+                proc = run_check(
+                    {"COSIGNERS.md": RECIPE.format(directory=".sigstore/acme/"), ".gitignore": "*.crt\n"}
+                )
+            self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+            self.assertIn("-> .sigstore/acme/MANIFEST.sha256.crt is ignored by git", proc.stdout)
+            self.assertFalse(git_dir.exists(), "git init wrote the caller's GIT_DIR")
+            self.assertFalse(index.exists(), "git add wrote the caller's GIT_INDEX_FILE")
 
 
 if __name__ == "__main__":

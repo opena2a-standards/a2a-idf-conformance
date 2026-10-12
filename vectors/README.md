@@ -35,4 +35,5 @@ deployment.
 A static secret scanner may report the `private` members of these files as
 hardcoded keys. Such a finding is expected: the values are the published
 RFC 8032 §7.1 test keys, and the generator re-derives every form of them from
-the two seeds on each run.
+the two seeds on each run. The repository's `.hmaignore` leaves that one check
+(`AST-CRED-003`) out of a hackmyagent scan for these two files only.
