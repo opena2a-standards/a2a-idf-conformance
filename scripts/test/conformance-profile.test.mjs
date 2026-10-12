@@ -89,20 +89,48 @@ test("--check fails when README.md says the suite composes with a layer no fixtu
   );
 });
 
+// Each case edits one fixture and names the line the profile must print for it.
+const FIELD_CASES = [
+  ...["name", "description", "spec", "expected"].map((field) => [
+    `without "${field}"`,
+    (fx) => delete fx[field],
+    `missing required field "${field}"`,
+  ]),
+  [
+    "without several required fields",
+    (fx) => {
+      delete fx.name;
+      delete fx.expected;
+    },
+    'missing required fields "name", "expected"',
+  ],
+  ['with "expected": null', (fx) => (fx.expected = null), 'required field "expected" is not a JSON object'],
+  [
+    "with several required fields of the wrong type",
+    (fx) => {
+      fx.name = 7;
+      fx.spec = "A2A-IDF §1";
+    },
+    'required field "name" is not a string; required field "spec" is not a JSON array',
+  ],
+];
+
 for (const [label, args] of [["--check", ["--check"]], ["regeneration", []]]) {
-  test(`${label} names a fixture without a required field in one line`, (t) => {
-    const root = scratchCopy(t);
-    const rel = "fixtures/composition/hippo-rfc9421/signature-alone-tag.json";
-    editFile(root, rel, (text) => {
-      const fixture = JSON.parse(text);
-      delete fixture.spec;
-      return JSON.stringify(fixture, null, 2) + "\n";
+  for (const [fixtureLabel, mutate, message] of FIELD_CASES) {
+    test(`${label} names a fixture ${fixtureLabel} in one line`, (t) => {
+      const root = scratchCopy(t);
+      const rel = "fixtures/levels/level-0-self-asserted.json";
+      editFile(root, rel, (text) => {
+        const fixture = JSON.parse(text);
+        mutate(fixture);
+        return JSON.stringify(fixture, null, 2) + "\n";
+      });
+      const profile = readFileSync(join(root, "conformance.json"), "utf8");
+      const result = run(root, ...args);
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+      assert.equal(result.stderr, "");
+      assert.equal(result.stdout, `${rel}: ${message}\n`);
+      assert.equal(readFileSync(join(root, "conformance.json"), "utf8"), profile);
     });
-    const profile = readFileSync(join(root, "conformance.json"), "utf8");
-    const result = run(root, ...args);
-    assert.equal(result.status, 1, result.stdout + result.stderr);
-    assert.equal(result.stderr, "");
-    assert.equal(result.stdout, `${rel}: missing required field "spec"\n`);
-    assert.equal(readFileSync(join(root, "conformance.json"), "utf8"), profile);
-  });
+  }
 }

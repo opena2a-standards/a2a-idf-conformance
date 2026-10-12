@@ -7,9 +7,11 @@
 //     blocks, including commands chained after `&&`, `||`, `;` or `|`. The script
 //     must exist relative to the Markdown file's directory or the repo root (the
 //     two working directories a reader can be expected to run them from), moved
-//     by any `cd <dir>` or `cd -- <dir>` earlier on the same line. A `cd` inside
-//     a subshell, `(cd <dir> && node ...)`, moves only the commands up to the
-//     closing parenthesis;
+//     by any `cd <dir>` or `cd -- <dir>` earlier on the same line. In a block
+//     labelled as shell (`bash`, `sh`, ...), a `cd` inside a subshell,
+//     `(cd <dir> && node ...)`, moves only the commands up to the closing
+//     parenthesis; other blocks do not split at parentheses. Text from an
+//     unquoted `#` that starts a word is a comment and is not read;
 //   - the files a `cosign sign-blob` command writes, in a fenced code block that tells
 //     the reader to commit them under `.sigstore/<org>/`, which must not be ignored by
 //     git at that location (`<placeholder>` segments are checked as `example-org`).
@@ -29,13 +31,24 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // past the next bracket and a long line is scanned in linear time.
 const INLINE_LINK = /\[[^[\]]*\]\(\s*<?([^)\s>[\]]+)>?(?:\s+"[^"]*")?\s*\)/g;
 const REF_DEFINITION = /^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s|$)/;
-// A command can start after `&&`, `;` or `|`, and after the `(` that opens a
-// subshell or the `)` that closes one. The group keeps each boundary in the
-// split, so the parentheses can be followed. `||` needs no alternative of its
+// A command can start after `&&`, `;` or `|`. `||` needs no alternative of its
 // own: `|` splits it into an empty piece, which matches no command.
-const COMMAND_BOUNDARY = /(&&|[;|()])/;
+const COMMAND_BOUNDARY = /&&|[;|]/;
+// In a shell block a command can also start after the `(` that opens a subshell
+// or the `)` that closes one. The group keeps each boundary in the split, so the
+// parentheses can be followed.
+const SHELL_COMMAND_BOUNDARY = /(&&|[;|()])/;
+const SHELL_LANGUAGES = new Set(["bash", "sh", "zsh", "ksh", "shell", "console", "shell-session", "sh-session"]);
 const SCRIPT_COMMAND = /^(?:\$\s+)?(?:node|python3?)\s+(\S+\.(?:mjs|cjs|js|py))(?:\s|$)/;
 const CD_COMMAND = /^(?:\$\s+)?cd(?:\s+(.*))?$/s;
+// A redirection word: `2>/dev/null`, `>>log`, `&>out`, `2>&1`, `<in`. With
+// nothing after the operator, the next word is its target.
+const REDIRECT = /^(?:\d+|&)?(?:<<<|<<-?|<>|<&|>&|>>|>\||<|>)(.*)$/;
+// Bounds the work on one line, which otherwise grows with the square of its
+// length: a `cd` past the 32nd on a line, or one that leads to a path longer
+// than 4096 characters (PATH_MAX on Linux), is not followed.
+const MAX_CD_STEPS = 32;
+const MAX_DIRECTORY_LENGTH = 4096;
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
 const COSIGN_SIGN = /^\s*(?:\$\s+)?cosign\s+sign-blob\s/;
 const COSIGN_OUTPUT = /--(?:output-signature|output-certificate|bundle)(?:=|\s+)(\S+)/g;
@@ -164,12 +177,39 @@ function describeBase(base) {
   return base === ROOT ? "the repo root" : `${relative(ROOT, base)}/`;
 }
 
-// The directory a `cd` moves to (`cd <dir>`, `cd -- <dir>`), or null when this
-// check cannot resolve it: no operand or more than one, an option other than a
-// leading `--`, or a target that needs the shell (`cd`, `cd ~`, `cd "$DIR"`,
-// `cd -`, `cd -P <dir>`).
+// The line up to an unquoted `#` that starts a word, where the shell's comment
+// begins. One pass over the line.
+function stripComment(line) {
+  let quote = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quote !== null) {
+      if (c === quote) quote = null;
+      else if (c === "\\" && quote === '"') i++;
+    } else if (c === "\\") {
+      i++;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+    } else if (c === "#" && (i === 0 || /[\s;&|()<>]/.test(line[i - 1]))) {
+      return line.slice(0, i);
+    }
+  }
+  return line;
+}
+
+// The directory a `cd` moves to (`cd <dir>`, `cd -- <dir>`, with any
+// redirections such as `2>/dev/null` set aside), or null when this check cannot
+// resolve it: no operand or more than one, an option other than a leading `--`,
+// or a target that needs the shell (`cd`, `cd ~`, `cd "$DIR"`, `cd -`,
+// `cd -P <dir>`).
 function cdTarget(args = "") {
-  const operands = args.split(/\s+/).filter(Boolean);
+  const words = args.split(/\s+/).filter(Boolean);
+  const operands = [];
+  for (let i = 0; i < words.length; i++) {
+    const redirect = words[i].match(REDIRECT);
+    if (redirect === null) operands.push(words[i]);
+    else if (redirect[1] === "" && ++i === words.length) return null;
+  }
   if (operands[0] === "--") operands.shift();
   return operands.length === 1 && !/^[~-]|[$"'`]/.test(operands[0]) ? operands[0] : null;
 }
@@ -180,6 +220,7 @@ function checkFile(relPath) {
   const broken = [];
   let checked = 0;
   let fence = null;
+  let shell = false;
   let block = [];
 
   readFileSync(abs, "utf8")
@@ -191,6 +232,8 @@ function checkFile(relPath) {
         const marker = fenceMatch[1];
         if (fence === null) {
           fence = marker;
+          const language = line.slice(fenceMatch[0].length).trim().split(/\s/)[0].toLowerCase();
+          shell = SHELL_LANGUAGES.has(language);
           block = [];
         } else if (marker[0] === fence[0] && marker.length >= fence.length) {
           fence = null;
@@ -207,7 +250,8 @@ function checkFile(relPath) {
         // The bases to return to as each open subshell closes: a `cd` inside
         // `( ... )` or `$( ... )` moves the commands up to the closing `)` only.
         const outer = [];
-        for (const piece of line.split(COMMAND_BOUNDARY)) {
+        let cdSteps = 0;
+        for (const piece of stripComment(line).split(shell ? SHELL_COMMAND_BOUNDARY : COMMAND_BOUNDARY)) {
           if (piece === "(") {
             outer.push(bases);
             continue;
@@ -219,10 +263,14 @@ function checkFile(relPath) {
           const part = piece.trim();
           const cd = part.match(CD_COMMAND);
           if (cd) {
-            // A target this check cannot resolve ends the checks for the rest of
-            // the line, or of the subshell it is in, instead of guessing.
-            const target = cdTarget(cd[1]);
-            bases = target === null ? [] : [...new Set(bases.map((b) => resolve(b, target)))];
+            // A target this check cannot resolve, or one past the bounds, ends
+            // the checks for the rest of the line, or of the subshell it is in,
+            // instead of guessing.
+            const target = ++cdSteps > MAX_CD_STEPS ? null : cdTarget(cd[1]);
+            bases =
+              target === null || bases.length === 0
+                ? []
+                : [...new Set(bases.map((b) => resolve(b, target)))].filter((b) => b.length <= MAX_DIRECTORY_LENGTH);
             continue;
           }
           const cmd = part.match(SCRIPT_COMMAND);

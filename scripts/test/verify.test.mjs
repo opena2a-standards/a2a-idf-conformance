@@ -68,6 +68,18 @@ for (const [label, field, mutate] of [
   ["an array envoys", "crossSuiteEquivalence.envoys", (fx) => (fx.crossSuiteEquivalence.envoys = [{ byteIdentical: true }])],
   ["a null envoys", "crossSuiteEquivalence.envoys", (fx) => (fx.crossSuiteEquivalence.envoys = null)],
   ["a string crossSuiteEquivalence", "crossSuiteEquivalence", (fx) => (fx.crossSuiteEquivalence = "not-an-object")],
+  ["an array crossSuiteEquivalence", "crossSuiteEquivalence", (fx) => (fx.crossSuiteEquivalence = [{ envoys: {} }])],
+  ["a null crossSuiteEquivalence", "crossSuiteEquivalence", (fx) => (fx.crossSuiteEquivalence = null)],
+  // The schema check runs before any other check: with the body tampered as
+  // well, the content-digest check would otherwise fail first.
+  [
+    "a null envoys and a tampered body",
+    "crossSuiteEquivalence.envoys",
+    (fx) => {
+      fx.crossSuiteEquivalence.envoys = null;
+      fx.input.body = `${fx.input.body ?? ""}tampered`;
+    },
+  ],
 ]) {
   test(`${label} fails at the schema stage in both verifiers`, (t) => {
     const path = writeAcceptVariant(t, mutate);
