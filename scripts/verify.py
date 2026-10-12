@@ -897,6 +897,12 @@ def _json_type(v: Any) -> str:
 
 
 def _json_text(v: Any) -> str:
+    """A scalar as JSON text, and an array or an object by its JSON type:
+    json.dumps recurses once per level of nesting, so it raises on a deeply
+    nested value. verify.mjs words a value the same way."""
+    vtype = _json_type(v)
+    if vtype in ("array", "object"):
+        return f"a JSON {vtype}"
     return json.dumps(v, ensure_ascii=False, separators=(",", ":"))
 
 

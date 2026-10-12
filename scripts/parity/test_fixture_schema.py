@@ -123,6 +123,17 @@ CASES: list[tuple[str, list, str]] = [
     (LEVEL, [("set", "level", 3)], "level: 3 is not one of"),
     (LEVEL, [("set", "level", True)], "level is present but is not a JSON integer"),
     (LEVEL, [("set", "$schema", "https://example.invalid/fixture.json")], "$schema: expected"),
+    # An array or an object is named by its JSON type, in the same words in both verifiers.
+    (
+        LEVEL,
+        [("set", "expected.verifyResult", ["ACCEPT"])],
+        'expected.verifyResult: a JSON array is not one of "ACCEPT", "REJECT"',
+    ),
+    (
+        LEVEL,
+        [("set", "$schema", {"$id": "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json"})],
+        '$schema: expected "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json", got a JSON object',
+    ),
 ]
 
 CONTROLS = sorted({base for base, _, _ in CASES})

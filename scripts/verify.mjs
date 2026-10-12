@@ -634,6 +634,13 @@ function jsonType(v) {
   return typeof v;
 }
 
+// A scalar as JSON text, and an array or an object by its JSON type, as
+// verify.py words a value (json.dumps there raises on a deeply nested value).
+function jsonText(v) {
+  const type = jsonType(v);
+  return type === "array" || type === "object" ? `a JSON ${type}` : JSON.stringify(v);
+}
+
 function fieldPath(path, key) {
   return path === "" ? key : `${path}.${key}`;
 }
@@ -651,10 +658,10 @@ function schemaViolation(schema, value, path) {
     }
   }
   if (schema.const !== undefined && value !== schema.const) {
-    return `${where}: expected ${JSON.stringify(schema.const)}, got ${JSON.stringify(value)}`;
+    return `${where}: expected ${jsonText(schema.const)}, got ${jsonText(value)}`;
   }
   if (schema.enum !== undefined && !schema.enum.includes(value)) {
-    return `${where}: ${JSON.stringify(value)} is not one of ${schema.enum.map((v) => JSON.stringify(v)).join(", ")}`;
+    return `${where}: ${jsonText(value)} is not one of ${schema.enum.map((v) => jsonText(v)).join(", ")}`;
   }
   if (type === "object") {
     for (const key of schema.required ?? []) {

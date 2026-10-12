@@ -39,9 +39,10 @@ VERIFIERS = {
 class Case(NamedTuple):
     name: str
     fixture: dict
-    observed: str  # "ACCEPT" or "REJECT[CATEGORY]"
+    observed: str | None  # "ACCEPT" or "REJECT[CATEGORY]"; None for a FAIL at stage schema
     pinned: str | None = None  # written to `expected`; defaults to `observed`
     nested: str | None = None  # JSON text written in place of the string NESTED
+    expected: dict | None = None  # written to `expected` as is, in place of `pinned`
 
 
 # A placeholder for a value too deeply nested for json.dumps to write; the
@@ -160,6 +161,15 @@ CASES = [
         "REJECT[SHAPE_INVALID]",
         nested="[" * DEPTH + '"\\udc00"' + "]" * DEPTH,
     ),
+    # A schema reason names an array by its JSON type, so a deeply nested
+    # expected.verifyResult fails at stage schema in both verifiers.
+    Case(
+        "deeply-nested-verify-result",
+        organization(),
+        None,
+        nested="[" * DEPTH + "]" * DEPTH,
+        expected={"verifyResult": NESTED},
+    ),
     # A reject reason that quotes a lone surrogate is still printed as FAIL, not ERROR.
     Case("lone-surrogate-in-reason", attestation_domain("example.com\udc00"), "REJECT[DOMAIN_MISMATCH]", pinned="ACCEPT"),
 ]
@@ -172,6 +182,8 @@ def expected_block(outcome: str) -> dict:
 
 
 def record(case: Case) -> dict:
+    if case.observed is None:
+        return {"gate": "FAIL", "verdict": None, "category": None}
     block = expected_block(case.observed)
     return {
         "gate": "PASS" if case.pinned in (None, case.observed) else "FAIL",
@@ -188,7 +200,7 @@ class VerifierAgreementTests(unittest.TestCase):
         root = Path(cls._tmp.name) / "fixtures"
         root.mkdir()
         for case in CASES:
-            case.fixture["expected"] = expected_block(case.pinned or case.observed)
+            case.fixture["expected"] = case.expected or expected_block(case.pinned or case.observed)
             text = json.dumps(case.fixture)
             if case.nested is not None:
                 text = text.replace(json.dumps(NESTED), case.nested)
