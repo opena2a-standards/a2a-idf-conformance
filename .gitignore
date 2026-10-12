@@ -26,5 +26,7 @@ parity-report.json
 *.p12
 *.pfx
 *.crt
+# Sigstore keyless certificates are public; cosigners commit them (COSIGNERS.md)
+!.sigstore/**/*.crt
 secrets.json
 credentials.json
