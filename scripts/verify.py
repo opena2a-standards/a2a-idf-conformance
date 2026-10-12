@@ -42,6 +42,8 @@ CONTENT_DIGEST_ALGORITHMS = {
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+# Envoys signature/v1 §4.3: the RFC 9421 `tag` an A2A message signature carries.
+A2A_MESSAGE_TAG = "a2a-message"
 
 IDENTITY_EXTENSION_URI = "https://a2a-protocol.org/extensions/agent-identity"
 IDENTITY_LEVELS = ("SELF_ASSERTED", "DOMAIN_VERIFIED", "ORGANIZATION_VERIFIED")
@@ -286,6 +288,17 @@ def verify_composition_fixture(fixture: dict[str, Any]) -> tuple[bool, str | Non
             "stage:  signature-input",
             f"reason: reconstructed {sig_input} != expected {expected.get('signatureInput')}",
         ]
+
+    # Envoys §4.3 tag rule, checked before any cryptography as in verify.mjs:
+    # an absent (or null) tag is `a2a-message`, any other tag is rejected.
+    tag = fixture["signatureParams"].get("tag")
+    if tag is None:
+        tag = A2A_MESSAGE_TAG
+    if tag != A2A_MESSAGE_TAG:
+        ok, observed, lines = gate_verdict(expected, "REJECT", "TAG_MISMATCH")
+        if not ok:
+            lines[-1] += f' (tag "{tag}" is not "{A2A_MESSAGE_TAG}")'
+        return ok, observed, lines
 
     # Extract public key per A2A-IDF §6 dual-shape resolution.
     try:

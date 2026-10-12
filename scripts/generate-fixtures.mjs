@@ -12,7 +12,13 @@
 //
 // Usage:  node scripts/generate-fixtures.mjs
 
-import { createHash, createPrivateKey, createPublicKey, sign as cryptoSign } from "node:crypto";
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  sign as cryptoSign,
+  verify as cryptoVerify,
+} from "node:crypto";
 import { mkdirSync, writeFileSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -204,6 +210,11 @@ const SPEC_RFC9421_VERIFY = {
   id: "RFC 9421",
   ref: "https://datatracker.ietf.org/doc/html/rfc9421",
   section: "§3.2 Verifying a Signature",
+};
+const SPEC_RFC9421_APP_REQUIREMENTS = {
+  id: "RFC 9421",
+  ref: "https://datatracker.ietf.org/doc/html/rfc9421",
+  section: "§3.2.1 Enforcing Application Requirements",
 };
 const SPEC_RFC9530 = {
   id: "RFC 9530",
@@ -636,9 +647,74 @@ function signatureTagNullFixture() {
   };
 }
 
+// --- composition fixtures: Envoys §4.3 tag rule ----------------------------------
+// The pair differs only in signatureParams.tag: an absent tag is treated as
+// `a2a-message` (ACCEPT), and any other tag marks a signature produced for a
+// different application (REJECT[TAG_MISMATCH]), even though it verifies.
+
+const FOREIGN_TAG = "not-a2a-message";
+
+function signatureTagAbsentFixture() {
+  const expected = expectedBlock(INPUT_V1, PARAMS_V1, TEST1);
+  assertEqual(expected.signatureBase64, ENVOYS_V1_SIG, "absent tag signs as Envoys §14 Vector 1");
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-composition-v1.json",
+    name: "aim-did-rfc9421/signature-tag-absent",
+    description:
+      "The absent half of the §4.3 tag pair: the signature-alone request (Envoys §14 Vector 1) with no tag parameter. An absent tag is treated as `a2a-message` for back-compat, so a conforming verifier MUST accept it. Paired with signature-tag-foreign, which differs only in carrying a tag other than `a2a-message`: a verifier that requires an explicit tag fails this fixture, and one that ignores the tag fails the other.",
+    spec: [
+      SPEC_A2A_IDF_S6,
+      SPEC_ENVOYS("§4.3 tag parameter"),
+      SPEC_RFC9421_APP_REQUIREMENTS,
+      SPEC_RFC8032("§7.1 Test 1 (Ed25519 keypair)"),
+      SPEC_DID_CORE,
+    ],
+    keypairRef: KEYPAIR_REF,
+    input: INPUT_V1,
+    signatureParams: PARAMS_V1,
+    keyidResolution: keyidResolution(TEST1.multibase, TEST1.jwkX),
+    expected,
+  };
+}
+
+function signatureTagForeignFixture() {
+  const params = { ...PARAMS_V1, tag: FOREIGN_TAG };
+  const expected = expectedBlock(INPUT_V1, params, TEST1, {
+    verifyResult: "REJECT",
+    rejectCategory: "TAG_MISMATCH",
+  });
+  assertEqual(
+    cryptoVerify(
+      null,
+      Buffer.from(expected.signatureBase, "utf-8"),
+      TEST1.privateKey,
+      Buffer.from(expected.signatureBase64, "base64"),
+    ),
+    true,
+    "foreign-tag signature verifies, so the tag is the only defect",
+  );
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-composition-v1.json",
+    name: "aim-did-rfc9421/signature-tag-foreign",
+    description: `Negative fixture, the foreign half of the §4.3 tag pair: the signature-alone request signed with tag="${FOREIGN_TAG}" by the correct key. Content-Digest, signature base, Signature-Input, keyid resolution and the Ed25519 signature are all valid. A conforming verifier MUST reject: the tag says the signature was produced for an application other than A2A messaging, and only \`a2a-message\` or an absent tag is accepted. Models cross-application replay of a signature that verifies. The tag check runs before the Ed25519 check, so the reject category is TAG_MISMATCH.`,
+    spec: [
+      SPEC_A2A_IDF_S6,
+      SPEC_ENVOYS("§4.3 tag parameter"),
+      SPEC_RFC9421_APP_REQUIREMENTS,
+      SPEC_RFC8032("§7.1 Test 1 (Ed25519 keypair)"),
+      SPEC_DID_CORE,
+    ],
+    keypairRef: KEYPAIR_REF,
+    input: INPUT_V1,
+    signatureParams: params,
+    keyidResolution: keyidResolution(TEST1.multibase, TEST1.jwkX),
+    expected,
+  };
+}
+
 // --- level fixtures (A2A-IDF §1 verification levels) ------------------------------
 
-const AGENT_ID = "urn:a2a:agent:example.com:financial-advisor:v2";
+const AGENT_ID ="urn:a2a:agent:example.com:financial-advisor:v2";
 const AGENT_KID = "agent-a1b2c3d4";
 const ISSUER_KID = "registry-x1y2z3";
 const VALIDATION_TIME = "2026-07-03T00:00:00Z";
@@ -1223,6 +1299,8 @@ const FILES = {
   "fixtures/composition/aim-did-rfc9421/body-tampered.json": bodyTamperedFixture(),
   "fixtures/composition/aim-did-rfc9421/cross-suite-mismatch.json": crossSuiteMismatchFixture(),
   "fixtures/composition/aim-did-rfc9421/signature-tag-null.json": signatureTagNullFixture(),
+  "fixtures/composition/aim-did-rfc9421/signature-tag-absent.json": signatureTagAbsentFixture(),
+  "fixtures/composition/aim-did-rfc9421/signature-tag-foreign.json": signatureTagForeignFixture(),
   "fixtures/levels/level-0-self-asserted.json": level0Fixture(),
   "fixtures/levels/level-0-agent-id-malformed.json": level0MalformedFixture(),
   "fixtures/levels/level-1-domain-verified.json": level1Fixture(),

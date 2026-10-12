@@ -34,6 +34,9 @@ const MULTICODEC_ED25519_PUB = Buffer.from("ed01", "hex");
 const BASE58_ALPHABET =
   "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
+// Envoys signature/v1 §4.3: the RFC 9421 `tag` an A2A message signature carries.
+const A2A_MESSAGE_TAG = "a2a-message";
+
 const IDENTITY_EXTENSION_URI = "https://a2a-protocol.org/extensions/agent-identity";
 const IDENTITY_LEVELS = ["SELF_ASSERTED", "DOMAIN_VERIFIED", "ORGANIZATION_VERIFIED"];
 const AGENT_ID_URN_RE = /^urn:a2a:agent:[A-Za-z0-9.-]+:[A-Za-z0-9._~-]+:[A-Za-z0-9._~-]+$/;
@@ -265,6 +268,18 @@ function verifyCompositionFixture(fixture, path) {
       stage: "signature-input",
       reason: `reconstructed ${sigInput} != expected ${expected.signatureInput}`,
     };
+  }
+
+  // Envoys §4.3 tag rule, an application requirement on the signature
+  // parameters (RFC 9421 §3.2.1), checked before any cryptography. An absent
+  // (or null) tag is treated as `a2a-message` for back-compat; any other tag
+  // marks a signature produced for a different application, which is rejected
+  // even when it verifies.
+  const tag = fixture.signatureParams.tag ?? A2A_MESSAGE_TAG;
+  if (tag !== A2A_MESSAGE_TAG) {
+    const gate = gateVerdict(path, expected, "REJECT", "TAG_MISMATCH");
+    if (!gate.ok) gate.reason += ` (tag "${tag}" is not "${A2A_MESSAGE_TAG}")`;
+    return gate;
   }
 
   // Extract the public key per A2A-IDF §6 dual-shape resolution.

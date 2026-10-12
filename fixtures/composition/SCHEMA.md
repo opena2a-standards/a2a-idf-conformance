@@ -65,6 +65,8 @@ The verifier serializes parameters in the order `keyid; created; nonce; tag`. Fi
 
 A `tag` of JSON `null` is treated as an absent tag: it is omitted from the signature base and the Signature-Input header, never serialized as `tag="null"`.
 
+**Tag rule (Envoys signature/v1 §4.3).** A verifier accepts a `tag` of `a2a-message` and treats an absent (or `null`) tag as `a2a-message` for back-compat. Any other tag value marks a signature produced for a different application: the verifier rejects it with `TAG_MISMATCH`, even when the signature verifies. The tag is an application requirement on the signature parameters (RFC 9421 §3.2.1), checked after the signature base and Signature-Input are reconstructed and before key resolution and Ed25519 verification. Pinned by the pair `aim-did-rfc9421/signature-tag-absent.json` (ACCEPT) and `aim-did-rfc9421/signature-tag-foreign.json` (REJECT[TAG_MISMATCH]).
+
 ## `keyidResolution`
 
 How the verifier obtains the public key referenced by `keyid`. Two shapes are supported.
@@ -114,7 +116,7 @@ Use when the `keyid` URL would return a W3C DID Document at `application/did+jso
 | `signature` | yes | RFC 9421 `Signature` header value: `sig1=:<base64>:`. |
 | `signatureBase64` | yes | The base64 signature, naked (no `sig1=:` wrapping). Informational: verifiers MUST NOT use it for the `crossSuiteEquivalence` byte-match, which compares the bytes parsed from `signature`. The `cross-suite-mismatch` negative fixture sets it to a value that differs from `signature` to catch a verifier that does. |
 | `verifyResult` | no | `ACCEPT` (default) or `REJECT`. Use `REJECT` for negative-path fixtures asserting that a particular malformation must be rejected. |
-| `rejectCategory` | REJECT fixtures | Machine-readable reject category the verifier must observe. Two categories are modeled. `SIGNATURE_INVALID`: tampered signature bytes, a substituted key, and a tampered body (content-digest is a signed component) all surface as an Ed25519 verification failure against the resolved key. `CROSS_SUITE_MISMATCH`: the signature verifies, but the fixture declares `crossSuiteEquivalence.envoys.byteIdentical: true` and the verified signature bytes are not the pinned vector (see below). A negative fixture must be valid at every stage before that check (digest, base, Signature-Input, key extraction), so a verifier that rejects for the wrong reason fails the fixture. |
+| `rejectCategory` | REJECT fixtures | Machine-readable reject category the verifier must observe. At the wire layer three categories are modeled. `TAG_MISMATCH`: the signature carries a `tag` other than `a2a-message` (see the tag rule above). `SIGNATURE_INVALID`: tampered signature bytes, a substituted key, and a tampered body (content-digest is a signed component) all surface as an Ed25519 verification failure against the resolved key. `CROSS_SUITE_MISMATCH`: the signature verifies, but the fixture declares `crossSuiteEquivalence.envoys.byteIdentical: true` and the verified signature bytes are not the pinned vector (see below). A negative fixture must be valid at every stage before its pinned check (digest, base, Signature-Input, then the tag rule, then key extraction), and a `TAG_MISMATCH` fixture carries a signature that verifies, so a verifier that rejects for the wrong reason, or ignores the tag, fails the fixture. |
 
 ### Exact `signatureBase` format
 
