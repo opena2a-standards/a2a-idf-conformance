@@ -47,7 +47,7 @@ PASS  /abs/path/to/signature-tampered.json
 
 On failure, the line is `FAIL` followed by `stage:` (which validation step failed) and `reason:` (the specific mismatch).
 
-When a verifier cannot evaluate a fixture at all, the line is `ERROR` followed by the error (the Python verifier prints the message, the Node verifier the stack trace), with no `observed:` line:
+When a verifier cannot evaluate a fixture at all, the line is `ERROR` followed by the error (the Python verifier prints its message; the Node verifier prints its message when it comes from a failed system call, such as opening a fixture path that does not exist or a file without read permission, and its stack trace otherwise), with no `observed:` line:
 
 ```
 ERROR /abs/path/to/fixture.json
