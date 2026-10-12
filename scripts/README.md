@@ -9,6 +9,7 @@ Reference tooling for producing and consuming A2A-IDF conformance fixtures.
 - [`generate-fixtures.mjs`](./generate-fixtures.mjs) — deterministic fixture generator. Regenerates every file under `fixtures/` and `vectors/` plus `MANIFEST.sha256` from the RFC 8032 §7.1 seeds and the templates in the script. Self-checks that the composition signatures byte-match the pinned Envoys §14 vectors. CI runs it and fails on any diff, so committed fixtures cannot drift from their documented inputs.
 - [`parity/parity.py`](./parity/parity.py) — cross-implementation parity gate. Runs both verifiers over the fixture set and fails on any disagreement in gate status, verdict, or reject category.
 - [`conformance_profile.py`](./conformance_profile.py) — generates (or `--check`s) `conformance.json`, the machine-readable profile derived from the fixtures. `--check` also fails when a coverage claim in the top-level `README.md` names an envelope that `notCovered` still lists, unless the claim marks it "(unverified)".
+- [`check-doc-links.mjs`](./check-doc-links.mjs) — documentation path check. Fails when a relative link in a tracked Markdown file, or the script path of a `node` / `python3` command in one of its code blocks, does not resolve. Command script paths may be relative to the Markdown file's directory or to the repo root. Run `node scripts/check-doc-links.mjs` from anywhere in the repo.
 
 ## Install
 

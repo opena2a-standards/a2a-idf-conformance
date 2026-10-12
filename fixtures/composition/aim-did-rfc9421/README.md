@@ -28,7 +28,7 @@ This is the core interop claim of A2A-IDF §6 and is what every fixture in this 
 
 ## Envelope verification scope
 
-The reference verifiers in [`../../scripts/`](../../scripts/) check the wire layer for every fixture:
+The reference verifiers in [`../../../scripts/`](../../../scripts/) check the wire layer for every fixture:
 
 - Recompute `Content-Digest` from `input.body`
 - Reconstruct the RFC 9421 signature base
@@ -41,8 +41,8 @@ Deeper envelope verification (responder signature for `bilateral-receipt`, per-l
 ## Verifying
 
 ```bash
-node ../../scripts/verify.mjs .
-python3 ../../scripts/verify.py .
+node ../../../scripts/verify.mjs .
+python3 ../../../scripts/verify.py .
 ```
 
 Both reference verifiers produce `PASS` on every fixture: the positives verify (`observed: ACCEPT`) and the negatives are rejected for the pinned reason (`observed: REJECT[SIGNATURE_INVALID]`, or `observed: REJECT[CROSS_SUITE_MISMATCH]` for `cross-suite-mismatch.json`).
