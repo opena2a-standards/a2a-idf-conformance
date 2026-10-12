@@ -82,9 +82,30 @@ def domain_verified(**members: Any) -> dict:
     return fixture
 
 
+def self_asserted(**members: Any) -> dict:
+    """The valid Level 0 fixture with top-level members replaced or added."""
+    fixture = json.loads((LEVELS_DIR / "level-0-self-asserted.json").read_text())
+    fixture.update(members)
+    return fixture
+
+
+def identity_param(name: str, value: Any) -> dict:
+    """The valid Level 1 fixture with one member of its identity params replaced."""
+    fixture = domain_verified()
+    identity_params(fixture)[name] = value
+    return fixture
+
+
 def attestation_domain(domain: str) -> dict:
     fixture = provider_url("https://example.com")
     identity_params(fixture)["attestations"][0]["domain"] = domain
+    return fixture
+
+
+def organization_verified(**members: Any) -> dict:
+    """The valid Level 2 fixture with top-level members replaced."""
+    fixture = json.loads((LEVELS_DIR / "level-2-organization-verified.json").read_text())
+    fixture.update(members)
     return fixture
 
 
@@ -92,7 +113,7 @@ def organization(**changes: Any) -> dict:
     """The valid Level 2 fixture with members of its attestation replaced or
     added after signing. A key of the form `subject.organization` reaches into
     a nested object."""
-    fixture = json.loads((LEVELS_DIR / "level-2-organization-verified.json").read_text())
+    fixture = organization_verified()
     attestation = identity_params(fixture)["attestations"][0]
     for key, value in changes.items():
         target = attestation
@@ -177,11 +198,44 @@ CASES = [
         nested="[" * DEPTH + "]" * DEPTH,
         expected={"verifyResult": NESTED},
     ),
-    # agentCard and evidence are the material under evaluation, so a value that
-    # is not a JSON object is a shape reject, not a schema failure.
+    # A reject reason names a value that is not a string by its JSON type, so a
+    # deeply nested identityLevel, agentId or attestation domain is a reject in
+    # both verifiers. Converting an array to text recursed in verify.mjs, and
+    # converting an array or an object did in verify.py.
+    *(
+        Case(f"deeply-nested-{kind}-{member}", fixture, observed, nested=nested)
+        for kind, nested in (
+            ("array", "[" * DEPTH + "]" * DEPTH),
+            ("object", '{"a":' * DEPTH + "{}" + "}" * DEPTH),
+        )
+        for member, fixture, observed in (
+            ("identity-level", identity_param("identityLevel", NESTED), "REJECT[SHAPE_INVALID]"),
+            ("agent-id", identity_param("agentId", NESTED), "REJECT[SHAPE_INVALID]"),
+            ("attestation-domain", attestation_domain(NESTED), "REJECT[DOMAIN_MISMATCH]"),
+        )
+    ),
+    # An integer literal beyond the range of a double is an infinite number in
+    # both verifiers, at any length: Python's int() refuses a literal of more
+    # than 4,300 digits. In a member no check reads it changes nothing, and as
+    # `level` it is not a JSON integer, which fails at stage schema.
+    Case("integer-of-5000-digits", self_asserted(x=NESTED), "ACCEPT", nested="7" * 5000),
+    Case("negative-integer-of-5000-digits", self_asserted(x=NESTED), "ACCEPT", nested="-" + "7" * 5000),
+    Case(
+        "integer-of-5000-digits-as-level",
+        self_asserted(level=NESTED),
+        None,
+        nested="7" * 5000,
+        expected={"verifyResult": "ACCEPT"},
+    ),
+    # agentCard is the material under evaluation at every level, and evidence at
+    # Levels 1 and 2, so a value there that is not a JSON object is a shape
+    # reject, not a schema failure. Level 0 does not read evidence.
     Case("agent-card-null", domain_verified(agentCard=None), "REJECT[SHAPE_INVALID]"),
     Case("agent-card-array", domain_verified(agentCard=[]), "REJECT[SHAPE_INVALID]"),
+    Case("agent-card-array-level-0", self_asserted(agentCard=[]), "REJECT[SHAPE_INVALID]"),
     Case("evidence-array", domain_verified(evidence=[]), "REJECT[SHAPE_INVALID]"),
+    Case("evidence-array-level-2", organization_verified(evidence=[]), "REJECT[SHAPE_INVALID]"),
+    Case("evidence-array-level-0", self_asserted(evidence=[]), "ACCEPT"),
     # A reject reason that quotes a lone surrogate is still printed as FAIL, not ERROR.
     Case("lone-surrogate-in-reason", attestation_domain("example.com\udc00"), "REJECT[DOMAIN_MISMATCH]", pinned="ACCEPT"),
 ]

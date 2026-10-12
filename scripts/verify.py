@@ -27,6 +27,7 @@ import base64
 import hashlib
 import ipaddress
 import json
+import math
 import os
 import re
 import stat
@@ -681,6 +682,22 @@ def _reject(category: str, reason: str) -> dict[str, Any]:
     return {"verdict": "REJECT", "category": category, "reason": reason}
 
 
+# Stands for a member the fixture does not carry, which verify.mjs reads as
+# undefined and tells apart from a JSON null.
+_MISSING: Any = object()
+
+
+def _reason_text(v: Any) -> str:
+    """A fixture value quoted in a reject reason: a string as it is, and any
+    other value by its JSON type, as verify.mjs words it. Each runtime converts
+    a value that is not a string to text in its own way, and repr() recurses
+    once per level of nesting, so it raises on a deeply nested array or
+    object."""
+    if isinstance(v, str):
+        return v
+    return "(missing)" if v is _MISSING else f"a JSON {_json_type(v)}"
+
+
 def evaluate_identity(fixture: dict[str, Any]) -> dict[str, Any]:
     """Evaluate the identity declaration. Returns {verdict, category?, reason?}.
 
@@ -699,7 +716,10 @@ def evaluate_identity(fixture: dict[str, Any]) -> dict[str, Any]:
         return _reject("SHAPE_INVALID", "agent-identity extension (or its params) missing")
     p = ext["params"]
     if p.get("identityLevel") not in IDENTITY_LEVELS:
-        return _reject("SHAPE_INVALID", f"unknown identityLevel: {p.get('identityLevel')}")
+        return _reject(
+            "SHAPE_INVALID",
+            f"unknown identityLevel: {_reason_text(p.get('identityLevel', _MISSING))}",
+        )
     # A declared agentId must be a URN; a JSON null counts as declared, as in verify.mjs.
     agent_id = p.get("agentId")
     if "agentId" in p and not (
@@ -707,7 +727,8 @@ def evaluate_identity(fixture: dict[str, Any]) -> dict[str, Any]:
     ):
         return _reject(
             "SHAPE_INVALID",
-            f"agentId is not a urn:a2a:agent:{{domain}}:{{agent-name}}:{{version}} URN: {agent_id}",
+            "agentId is not a urn:a2a:agent:{domain}:{agent-name}:{version} URN: "
+            + _reason_text(agent_id),
         )
     pk = p.get("publicKey")
     if _ed25519_key_from_jwk(pk) is None or not _is_nonempty_str(pk.get("kid")):
@@ -739,7 +760,8 @@ def evaluate_domain_verified(
         return _reject("SHAPE_INVALID", "provider.url missing or unparseable")
     if att.get("domain") != domain:
         return _reject(
-            "DOMAIN_MISMATCH", f"attestation domain {att.get('domain')} != provider domain {domain}"
+            "DOMAIN_MISMATCH",
+            f"attestation domain {_reason_text(att.get('domain', _MISSING))} != provider domain {domain}",
         )
     dns_txt = _as_dict(_as_dict(fixture.get("evidence")).get("dnsTxt"))
     record_name = dns_txt.get("recordName")
@@ -896,13 +918,24 @@ def _json_type(v: Any) -> str:
     return "object"
 
 
+# Number.MAX_SAFE_INTEGER in verify.mjs: up to it every integer is a double.
+_MAX_SAFE_INTEGER = 2**53 - 1
+
+
 def _json_text(v: Any) -> str:
-    """A scalar as JSON text, and an array or an object by its JSON type:
-    json.dumps recurses once per level of nesting, so it raises on a deeply
-    nested value. verify.mjs words a value the same way."""
+    """A string, a boolean, null and a safe integer as JSON text, and any other
+    value by its JSON type, as verify.mjs words a value: json.dumps recurses
+    once per level of nesting, so it raises on a deeply nested array or object,
+    and the two runtimes write a number outside the safe integers differently
+    (1e-07 and 1e-7, Infinity and null for 1e400, 12345678901234567890 and
+    12345678901234567000)."""
     vtype = _json_type(v)
     if vtype in ("array", "object"):
         return f"a JSON {vtype}"
+    if vtype in ("integer", "number"):
+        if vtype == "number" or abs(v) > _MAX_SAFE_INTEGER:
+            return f"a JSON {vtype}"
+        return str(int(v))  # 1.0 as 1 and -0.0 as 0, as JSON.stringify writes them
     return json.dumps(v, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -961,7 +994,20 @@ def _reject_constant(name: str) -> None:
     raise ValueError(f"fixture is not valid JSON: {name} is not a JSON value")
 
 
-_JSON_SCAN = json.JSONDecoder(parse_constant=_reject_constant).scan_once
+def _parse_int(literal: str) -> int | float:
+    # JSON.parse in verify.mjs reads every number as a double, where an integer
+    # literal beyond the range of a double is infinite. int() would hold such a
+    # literal exactly, and refuses one of more digits than
+    # sys.get_int_max_str_digits() (4,300 by default). The largest double has
+    # 309 digits, so a shorter literal is within range.
+    if len(literal) > 308:
+        value = float(literal)
+        if math.isinf(value):
+            return value
+    return int(literal)
+
+
+_JSON_SCAN = json.JSONDecoder(parse_constant=_reject_constant, parse_int=_parse_int).scan_once
 _JSON_WHITESPACE = re.compile(r"[ \t\n\r]*")
 
 

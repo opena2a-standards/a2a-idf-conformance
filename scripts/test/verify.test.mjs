@@ -130,6 +130,162 @@ for (const constant of ["NaN", "Infinity", "-Infinity"]) {
   });
 }
 
+// Runs both verifiers once over a scratch directory holding `variants`, an
+// object of file name to fixture text, and returns each verifier's output as
+// { file name: [status, ...the lines printed under it] }, so the two are
+// compared whatever order each walks the directory in.
+function runOverVariants(t, variants) {
+  const dir = mkdtempSync(join(tmpdir(), "verify-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  for (const [name, text] of Object.entries(variants)) writeFileSync(join(dir, name), text);
+  const blocks = {};
+  for (const [verifier, argv] of Object.entries(VERIFIERS)) {
+    const result = runVerifier(argv, dir);
+    assert.equal(result.stderr, "", verifier);
+    blocks[verifier] = {};
+    let current = null;
+    for (const line of result.stdout.split("\n")) {
+      const status = line.match(/^(PASS|FAIL|ERROR) .*\/([^/]+)$/);
+      if (status) {
+        current = blocks[verifier][status[2]] = [status[1]];
+      } else if (current !== null && line.startsWith("      ")) {
+        current.push(line.trim());
+      }
+    }
+  }
+  return blocks;
+}
+
+// The text of a fixture after `mutate`. When `literal` is given, `mutate` sets
+// one member to PLACEHOLDER and the placeholder is replaced by `literal`, JSON
+// text that JSON.stringify does not write (1.0, 1e400, an integer of 5,000
+// digits).
+const PLACEHOLDER = "literal-placeholder";
+
+function literalVariant(source, mutate, literal) {
+  const fixture = JSON.parse(readFileSync(join(REPO, source), "utf8"));
+  mutate(fixture);
+  const text = JSON.stringify(fixture);
+  if (literal === undefined) return text;
+  const replaced = text.replace(JSON.stringify(PLACEHOLDER), () => literal);
+  assert.notEqual(replaced, text);
+  return replaced;
+}
+
+// A reject reason quotes a string as it is and names any other value by its
+// JSON type, in the same words in both verifiers. Each runtime's own text for
+// such a value differed (an empty string and [] for an empty array, undefined
+// and None for a missing member), and on a deeply nested value one verifier
+// raised where the other reached a verdict. The variants pin ACCEPT, so the
+// reason is printed.
+const VALUE_KINDS = [
+  ["array", "[[]]", "a JSON array"],
+  ["object", '{"a":{}}', "a JSON object"],
+  ["integer", "5", "a JSON integer"],
+  ["number", "0.5", "a JSON number"],
+  ["infinite", "1e400", "a JSON number"],
+  ["boolean", "true", "a JSON boolean"],
+  ["null", "null", "a JSON null"],
+  ["string", '"PLATINUM"', "PLATINUM"],
+  ["missing", undefined, "(missing)"],
+];
+const identityParams = (fx) => fx.agentCard.capabilities.extensions[0].params;
+
+for (const [label, member, holder, category, reason] of [
+  ["an identityLevel", "identityLevel", identityParams, "SHAPE_INVALID", (text) => `unknown identityLevel: ${text}`],
+  [
+    "an agentId",
+    "agentId",
+    identityParams,
+    "SHAPE_INVALID",
+    (text) => `agentId is not a urn:a2a:agent:{domain}:{agent-name}:{version} URN: ${text}`,
+  ],
+  [
+    "an attestation domain",
+    "domain",
+    (fx) => identityParams(fx).attestations[0],
+    "DOMAIN_MISMATCH",
+    (text) => `attestation domain ${text} != provider domain example.com`,
+  ],
+]) {
+  test(`a reject reason words ${label} that is not a string the same way in both verifiers`, (t) => {
+    const variants = {};
+    const expected = {};
+    for (const [kind, literal, text] of VALUE_KINDS) {
+      // An agentId that is missing is not declared, which is another check's reject.
+      if (member === "agentId" && literal === undefined) continue;
+      variants[`${kind}.json`] = literalVariant(
+        "fixtures/levels/level-1-domain-verified.json",
+        (fx) => {
+          if (literal === undefined) delete holder(fx)[member];
+          else holder(fx)[member] = PLACEHOLDER;
+        },
+        literal,
+      );
+      expected[`${kind}.json`] = [
+        "FAIL",
+        `observed: REJECT[${category}]`,
+        "stage:  verdict",
+        `reason: verify result REJECT[${category}] != expected ACCEPT (${reason(text)})`,
+      ];
+    }
+    const blocks = runOverVariants(t, variants);
+    assert.deepEqual(blocks.node, expected);
+    assert.deepEqual(blocks.python, blocks.node);
+  });
+}
+
+// A schema reason writes a number as text only when it is a safe integer, which
+// both runtimes write the same way, and names any other number by its JSON
+// type. JSON.stringify and json.dumps wrote 1 and 1.0, null and Infinity, 0 and
+// -0.0, 1e-7 and 1e-07, 12345678901234567000 and 12345678901234567890. An
+// integer beyond the range of a double is an infinite number in both verifiers,
+// so neither calls it a JSON integer.
+test("a schema reason words a number the same way in both verifiers", (t) => {
+  const variants = {};
+  const expected = {};
+  for (const [name, literal, text] of [
+    ["float-one", "1.0", "1"],
+    ["negative-zero", "-0.0", "0"],
+    ["largest-safe-integer", "9007199254740991", "9007199254740991"],
+    ["smallest-safe-integer", "-9007199254740991", "-9007199254740991"],
+    ["past-safe-integers", "9007199254740993", "a JSON integer"],
+    ["twenty-digits", "12345678901234567890", "a JSON integer"],
+    ["small-fraction", "1e-7", "a JSON number"],
+    ["float-overflow", "1e400", "a JSON number"],
+    ["integer-of-400-digits", "7".repeat(400), "a JSON number"],
+    ["integer-of-5000-digits", "7".repeat(5000), "a JSON number"],
+    ["negative-integer-of-5000-digits", `-${"7".repeat(5000)}`, "a JSON number"],
+  ]) {
+    variants[`${name}.json`] = literalVariant(
+      "fixtures/levels/level-0-self-asserted.json",
+      (fx) => (fx.expected.verifyResult = PLACEHOLDER),
+      literal,
+    );
+    expected[`${name}.json`] = [
+      "FAIL",
+      "stage:  schema",
+      `reason: expected.verifyResult: ${text} is not one of "ACCEPT", "REJECT"`,
+    ];
+  }
+  // As `level`, an integer beyond the range of a double is not a JSON integer.
+  for (const digits of [400, 5000]) {
+    variants[`level-of-${digits}-digits.json`] = literalVariant(
+      "fixtures/levels/level-0-self-asserted.json",
+      (fx) => (fx.level = PLACEHOLDER),
+      "7".repeat(digits),
+    );
+    expected[`level-of-${digits}-digits.json`] = [
+      "FAIL",
+      "stage:  schema",
+      "reason: level is present but is not a JSON integer",
+    ];
+  }
+  const blocks = runOverVariants(t, variants);
+  assert.deepEqual(blocks.node, expected);
+  assert.deepEqual(blocks.python, blocks.node);
+});
+
 // A fixture path that does not exist is an ERROR fixture with a summary line,
 // not an uncaught exception. The message wording is each runtime's own.
 test("a fixture path that does not exist is reported as ERROR by both verifiers", (t) => {
@@ -206,6 +362,34 @@ test("a symlink loop is reported as ERROR by both verifiers", { skip: process.pl
       ],
       "summary: 1 pass, 2 fail (3 fixtures)",
     );
+  }
+});
+
+// The walk does not follow a symlink to a directory, so both verifiers list the
+// same fixtures: verify.mjs followed one, listing the fixtures under it a second
+// time and once more per level through a link to a parent directory. A symlink
+// to a file is a fixture, and a directory named on the command line is walked
+// when it is a symlink.
+test("a symlink to a directory is not followed during the walk by either verifier", { skip: process.platform === "win32" }, (t) => {
+  const { dir } = scratchFixtureDir(t);
+  mkdirSync(join(dir, "real"));
+  writeFileSync(join(dir, "real", "a.json"), readFileSync(join(dir, "valid.json")));
+  symlinkSync("real", join(dir, "alias"));
+  symlinkSync(".", join(dir, "parent"));
+  // A fixture name does not make a symlink to a directory a fixture.
+  symlinkSync("real", join(dir, "directory.json"));
+  symlinkSync(join("real", "a.json"), join(dir, "file.json"));
+  const passed = (result) =>
+    result.stdout.split("\n").filter((line) => line.startsWith("PASS  ")).map((line) => line.slice(6)).sort();
+  for (const [name, argv] of Object.entries(VERIFIERS)) {
+    const walked = runVerifier(argv, dir);
+    assert.equal(walked.status, 0, `${name}: ${walked.stdout}${walked.stderr}`);
+    assert.deepEqual(passed(walked), ["file.json", join("real", "a.json"), "valid.json"].map((path) => join(dir, path)), name);
+    assert.deepEqual(walked.stdout.split("\n").slice(-2), ["summary: 3 pass, 0 fail (3 fixtures)", ""], name);
+    const named = runVerifier(argv, join(dir, "alias"));
+    assert.equal(named.status, 0, `${name}: ${named.stdout}${named.stderr}`);
+    assert.deepEqual(passed(named), [join(dir, "alias", "a.json")], name);
+    assert.deepEqual(named.stdout.split("\n").slice(-2), ["summary: 1 pass, 0 fail (1 fixtures)", ""], name);
   }
 });
 
