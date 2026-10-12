@@ -42,7 +42,7 @@ COSIGNERS.md       Second-party cosignature registry over MANIFEST.sha256
 The first composition fixture set is `fixtures/composition/aim-did-rfc9421/`, which exercises:
 
 - **L1:** [#1829](https://github.com/a2aproject/A2A/issues/1829) wire signature (Ed25519 over RFC 9421 components `("@method" "@path" "content-digest")` with `created` / `nonce` / `keyid`)
-- **L2:** [#1496](https://github.com/a2aproject/A2A/pull/1496) identity-framework wrap (A2A-IDF extension under `metadata`)
+- **L2:** [#1496](https://github.com/a2aproject/A2A/pull/1496) identity-framework layer: A2A-IDF §6 keyid resolution (DID Document), pinned in each fixture's `keyidResolution` member
 - **Key resolution:** W3C DID Document with `Ed25519VerificationKey2020` and `publicKeyMultibase`
 
 Three shapes per fixture, pinned to the RFC 8032 §7.1 keypair:
