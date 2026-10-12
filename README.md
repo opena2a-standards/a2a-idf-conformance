@@ -57,7 +57,9 @@ These shapes parallel the `envoys-rfc9421/` fixtures hosted in `aeoess/aps-confo
 
 ## Reference implementation
 
-[**AIM**](https://github.com/opena2a-org) is the canonical reference implementation of A2A-IDF and ships Ed25519 message signing, JCS canonicalization, and W3C DID Document resolution today. AIM does not have a privileged position in the specification (any conforming implementation may serve as the basis for cross-validation), but its production deployment is the source of the test vectors in this suite.
+[**AIM**](https://github.com/opena2a-org) is the canonical reference implementation of A2A-IDF and ships Ed25519 message signing, JCS canonicalization, and W3C DID Document resolution today. AIM does not have a privileged position in the specification: any conforming implementation may serve as the basis for cross-validation.
+
+The test vectors in this suite are not taken from AIM or from any deployment. The keypairs in [`vectors/`](./vectors/) are the RFC 8032 §7.1 Test 1 and Test 2 seeds, and every generator-owned fixture is derived from those two seeds and the templates in [`scripts/generate-fixtures.mjs`](./scripts/generate-fixtures.mjs). The generator also asserts that the `aim-did-rfc9421/` composition signatures byte-match [Envoys signature/v1 §14 Vectors 1-3](https://envoys.me/specs/signature/v1). The two `hippo-rfc9421/` fixtures are snapshots produced by the [hippo-auth](https://github.com/lawcontinue/hippo-auth) signing path and pinned as contributed.
 
 ## Contributing
 
