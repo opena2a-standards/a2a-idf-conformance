@@ -326,6 +326,8 @@ function b64urlNoPad(buf) {
 // Minimal RFC 8785 (JCS) for the restricted value domain used by level
 // fixtures: objects, arrays, and strings only (no numbers, booleans, null).
 // Within that domain, sorted-key compact JSON is exactly the JCS form.
+// Array.prototype.sort() compares UTF-16 code units, which is the property
+// order RFC 8785 §3.2.3 requires (including keys outside the BMP).
 function jcs(value) {
   if (Array.isArray(value)) return `[${value.map(jcs).join(",")}]`;
   if (value !== null && typeof value === "object") {

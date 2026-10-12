@@ -327,15 +327,27 @@ def verify_composition_fixture(fixture: dict[str, Any]) -> tuple[bool, str | Non
 # --- level fixtures (A2A-IDF §1 verification levels) ------------------------------
 
 
+def _utf16_sort_key(key: str) -> bytes:
+    # Big-endian bytes compare in the same order as 16-bit code units.
+    # surrogatepass keeps a lone surrogate sortable, as it is in JavaScript.
+    return key.encode("utf-16-be", "surrogatepass")
+
+
 def _jcs(value: Any) -> str:
     """Minimal RFC 8785 (JCS) for the restricted value domain used by level
     fixtures: objects, arrays, and strings only (no numbers, booleans, null).
-    Within that domain, sorted-key compact JSON is exactly the JCS form."""
+    Within that domain, sorted-key compact JSON is exactly the JCS form.
+
+    RFC 8785 §3.2.3 orders property names by UTF-16 code units. Python's
+    default str ordering is by code point, which disagrees once a key holds a
+    character above U+FFFF (a surrogate pair, D800-DFFF) and another holds one
+    in U+E000-U+FFFF, so the sort key is the UTF-16BE encoding."""
     if isinstance(value, list):
         return "[" + ",".join(_jcs(v) for v in value) + "]"
     if isinstance(value, dict):
         return "{" + ",".join(
-            f"{json.dumps(k, ensure_ascii=False)}:{_jcs(value[k])}" for k in sorted(value)
+            f"{json.dumps(k, ensure_ascii=False)}:{_jcs(value[k])}"
+            for k in sorted(value, key=_utf16_sort_key)
         ) + "}"
     if isinstance(value, str):
         return json.dumps(value, ensure_ascii=False)

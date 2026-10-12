@@ -20,6 +20,7 @@ behavior outside the suite's scope — the fixtures pin what the record must
 | [`level-2-organization-verified.json`](./level-2-organization-verified.json) | 2 ORGANIZATION_VERIFIED | ACCEPT | Registry attestation: Ed25519 over the RFC 8785 JCS form of the attestation minus `signature`; subject binds to agentId + kid; validationTime inside [verifiedAt, expiresAt]. |
 | [`level-2-attestation-tampered.json`](./level-2-attestation-tampered.json) | 2 | REJECT[SIGNATURE_INVALID] | subject.organization altered after signing. |
 | [`level-2-attestation-expired.json`](./level-2-attestation-expired.json) | 2 | REJECT[EXPIRED] | Valid signature, but expiresAt precedes the pinned validationTime. |
+| [`level-2-attestation-non-bmp-keys.json`](./level-2-attestation-non-bmp-keys.json) | 2 ORGANIZATION_VERIFIED | ACCEPT | The attestation carries an extra member whose property names are the RFC 8785 §3.2.3 sorting example (U+1F600 and U+FB33 among them). The signing input orders them by UTF-16 code units. A verifier that sorts by code point rejects it with SIGNATURE_INVALID. |
 
 Keys: the agent key is RFC 8032 §7.1 Test 1 ([`../../vectors/rfc8032-7-1.json`](../../vectors/rfc8032-7-1.json));
 the trust-registry issuer key is Test 2 ([`../../vectors/rfc8032-7-1-test2.json`](../../vectors/rfc8032-7-1-test2.json)).
@@ -91,3 +92,13 @@ Attestation values are restricted to JSON objects, arrays, and strings (no
 numbers, booleans, or null). Within that domain, sorted-key compact JSON is
 exactly the RFC 8785 canonical form, which keeps the reference verifiers'
 minimal JCS implementations exact. Keep new fixtures inside that domain.
+
+"Sorted" means RFC 8785 §3.2.3 order: property names compared as arrays of
+UTF-16 code units, not as Unicode code points. The two orders differ when one
+key holds a character above U+FFFF (encoded as a surrogate pair, D800-DFFF)
+and another holds a character in U+E000-U+FFFF. JavaScript's default
+`Array.prototype.sort()` already compares code units. Python's `sorted()`
+compares code points, so `verify.py` sorts on the key's UTF-16BE encoding.
+Property names are not restricted to ASCII.
+[`level-2-attestation-non-bmp-keys.json`](./level-2-attestation-non-bmp-keys.json)
+pins this case.

@@ -127,9 +127,11 @@ function contentDigestOf(body) {
 }
 
 // --- minimal RFC 8785 (JCS) for the restricted value domain used here ----------
-// Fixture attestations contain only objects and strings (no numbers, arrays of
-// scalars only, ASCII keys), for which sorted-key compact JSON is exactly the
-// JCS canonical form. Keep fixture content inside that domain.
+// Fixture attestations contain only objects, arrays, and strings (no numbers,
+// booleans, or null), for which sorted-key compact JSON is exactly the JCS
+// canonical form. Property names sort by UTF-16 code units (RFC 8785 §3.2.3),
+// which is what Array.prototype.sort() does by default; keys outside the BMP
+// are therefore in scope. Keep fixture content inside that domain.
 
 function jcs(value) {
   if (Array.isArray(value)) return `[${value.map(jcs).join(",")}]`;
@@ -660,7 +662,7 @@ function dnsTxtRecordValue(fp) {
 }
 
 // Signs an organization attestation (RFC 8785 JCS of the object minus `signature`).
-function signedOrgAttestation({ verifiedAt, expiresAt, tamper } = {}) {
+function signedOrgAttestation({ verifiedAt, expiresAt, tamper, extra } = {}) {
   const unsigned = {
     type: "organization",
     issuer: {
@@ -675,6 +677,7 @@ function signedOrgAttestation({ verifiedAt, expiresAt, tamper } = {}) {
     },
     verifiedAt,
     expiresAt,
+    ...extra,
   };
   const signature = b64url(signEd25519(TEST2, jcs(unsigned)));
   const att = { ...unsigned, signature };
@@ -855,6 +858,51 @@ function level2ExpiredFixture() {
   };
 }
 
+// RFC 8785 §3.2.3 property-sorting example, and the order the RFC requires:
+// UTF-16 code units, so U+1F600 (surrogate pair D83D DE00) sorts before
+// U+FB33, the reverse of code-point order.
+const RFC8785_SORTING_EXAMPLE = {
+  "€": "Euro Sign",
+  "\r": "Carriage Return",
+  "דּ": "Hebrew Letter Dalet With Dagesh",
+  "1": "One",
+  "😀": "Emoji: Grinning Face",
+  "\u0080": "Control",
+  "ö": "Latin Small Letter O With Diaeresis",
+};
+const RFC8785_SORTED_KEYS = ["\r", "1", "\u0080", "ö", "€", "😀", "דּ"];
+
+function level2NonBmpKeysFixture() {
+  assertEqual(
+    jcs(RFC8785_SORTING_EXAMPLE),
+    `{${RFC8785_SORTED_KEYS.map((k) => `${JSON.stringify(k)}:${JSON.stringify(RFC8785_SORTING_EXAMPLE[k])}`).join(",")}}`,
+    "RFC 8785 §3.2.3 property sorting",
+  );
+  const attestation = signedOrgAttestation({
+    verifiedAt: "2026-02-17T00:00:00Z",
+    expiresAt: "2027-02-17T00:00:00Z",
+    extra: { rfc8785SortingExample: RFC8785_SORTING_EXAMPLE },
+  });
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+    name: "levels/level-2-attestation-non-bmp-keys",
+    description:
+      "Level 2 (ORGANIZATION_VERIFIED): the valid organization attestation with one additional member, rfc8785SortingExample, whose property names are the RFC 8785 §3.2.3 sorting example. That set contains a key outside the Basic Multilingual Plane (U+1F600) and a key in U+E000-U+FFFF (U+FB33), so ordering by UTF-16 code units (required) and by Unicode code points (not conforming) produce different signing inputs. The registry signed the UTF-16-ordered JCS form. A conforming verifier includes the unknown member in the signing input, sorts it per RFC 8785 §3.2.3, and ACCEPTs; a verifier that sorts by code point reconstructs different bytes and rejects with SIGNATURE_INVALID.",
+    spec: [
+      SPEC_IDF_LEVELS("§1 Organization Verification (registry attestation)"),
+      SPEC_RFC8785("§3.2.3 Sorting of Object Properties (UTF-16 code units)"),
+      SPEC_RFC8032("§7.1 Test 1 (agent key), Test 2 (registry issuer key)"),
+    ],
+    level: 2,
+    agentCard: agentCard("ORGANIZATION_VERIFIED", { attestations: [attestation] }),
+    evidence: {
+      issuerPublicKey: issuerPublicKeyJwk(),
+      validationTime: VALIDATION_TIME,
+    },
+    expected: { verifyResult: "ACCEPT" },
+  };
+}
+
 // --- keypair vectors ---------------------------------------------------------------
 
 function keypairVector(kp, { name, test, role }) {
@@ -913,6 +961,7 @@ const FILES = {
   "fixtures/levels/level-2-organization-verified.json": level2Fixture(),
   "fixtures/levels/level-2-attestation-tampered.json": level2TamperedFixture(),
   "fixtures/levels/level-2-attestation-expired.json": level2ExpiredFixture(),
+  "fixtures/levels/level-2-attestation-non-bmp-keys.json": level2NonBmpKeysFixture(),
 };
 
 function assertEqual(actual, expected, what) {

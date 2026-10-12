@@ -479,6 +479,31 @@
       "description": "Negative fixture: an ORGANIZATION_VERIFIED attestation whose registry signature is VALID but whose validity window ended before the pinned validationTime (expiresAt 2025-02-17 < validationTime 2026-07-03). Every other field is well-formed and correctly bound. A conforming verifier MUST reject on the validity window alone. The fixture pins validationTime so the expiry decision is deterministic and never depends on the wall clock."
     },
     {
+      "fixture": "fixtures/levels/level-2-attestation-non-bmp-keys.json",
+      "name": "levels/level-2-attestation-non-bmp-keys",
+      "fixtureType": "level",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§1 Organization Verification (registry attestation)"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "§3.2.3 Sorting of Object Properties (UTF-16 code units)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (agent key), Test 2 (registry issuer key)"
+        }
+      ],
+      "expected": "ACCEPT",
+      "description": "Level 2 (ORGANIZATION_VERIFIED): the valid organization attestation with one additional member, rfc8785SortingExample, whose property names are the RFC 8785 §3.2.3 sorting example. That set contains a key outside the Basic Multilingual Plane (U+1F600) and a key in U+E000-U+FFFF (U+FB33), so ordering by UTF-16 code units (required) and by Unicode code points (not conforming) produce different signing inputs. The registry signed the UTF-16-ordered JCS form. A conforming verifier includes the unknown member in the signing input, sorts it per RFC 8785 §3.2.3, and ACCEPTs; a verifier that sorts by code point reconstructs different bytes and rejects with SIGNATURE_INVALID."
+    },
+    {
       "fixture": "fixtures/levels/level-2-attestation-tampered.json",
       "name": "levels/level-2-attestation-tampered",
       "fixtureType": "level",
