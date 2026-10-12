@@ -106,6 +106,30 @@ for (const [label, field, mutate] of [
   });
 }
 
+// NaN, Infinity and -Infinity are not JSON. JSON.parse raises on them, and
+// Python's json module reads them as numbers unless told not to, which would
+// make verify.py reach a verdict where verify.mjs reports ERROR.
+for (const constant of ["NaN", "Infinity", "-Infinity"]) {
+  test(`a fixture holding ${constant} is reported as ERROR by both verifiers`, (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "verify-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const source = readFileSync(join(REPO, "fixtures/levels/level-0-self-asserted.json"), "utf8");
+    const text = source.replace('"spec": [', `"spec": [${constant}, `);
+    assert.notEqual(text, source);
+    const path = join(dir, "variant.json");
+    writeFileSync(path, text);
+    for (const [name, argv] of Object.entries(VERIFIERS)) {
+      const result = runVerifier(argv, path);
+      assert.equal(result.status, 1, `${name}: ${result.stdout}${result.stderr}`);
+      assert.equal(result.stderr, "", name);
+      const lines = result.stdout.split("\n");
+      assert.match(lines[0], /^ERROR .*variant\.json$/, name);
+      assert.doesNotMatch(result.stdout, /observed:/, name);
+      assert.deepEqual(lines.slice(-2), ["summary: 0 pass, 1 fail (1 fixtures)", ""], name);
+    }
+  });
+}
+
 // A fixture path that does not exist is an ERROR fixture with a summary line,
 // not an uncaught exception. The message wording is each runtime's own.
 test("a fixture path that does not exist is reported as ERROR by both verifiers", (t) => {

@@ -160,6 +160,39 @@ test("follows a cd that carries a redirection or a trailing comment, not one wit
   assert.match(result.stdout, /^summary: 7 paths checked, 3 broken$/m);
 });
 
+// The placeholder rule is for the directory. Line 6 names the directory the
+// `cd` moved to, which pins the `&` of `&>` as part of the redirection.
+test("sets aside a redirection whose target is a placeholder, not a placeholder in the directory", (t) => {
+  const root = scratchRepo(t, {
+    "fixtures/levels/README.md": "# Levels\n",
+    "README.md": [
+      "# Demo",
+      "",
+      "```bash",
+      "cd fixtures/levels 2><log> && node ../../scripts/nope.mjs",
+      "cd fixtures/levels 2> <log> && node ../../scripts/gone.mjs",
+      "cd fixtures/levels&>/dev/null && node ../../scripts/missing.mjs",
+      "cd fixtures/levels><log> && node ../../scripts/lost.mjs",
+      "cd fixtures/<level>>/dev/null && node ../../scripts/elsewhere.mjs",
+      "cd <your-clone>>/dev/null && node scripts/elsewhere.mjs",
+      "cd fixtures/levels 12&>log && node ../../scripts/elsewhere.mjs",
+      "```",
+      "",
+    ].join("\n"),
+  });
+  const result = runCheck(root);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.equal(result.stderr, "");
+  for (const [line, script] of [[4, "nope"], [5, "gone"], [6, "missing"], [7, "lost"]]) {
+    assert.match(
+      result.stdout,
+      new RegExp(`^FAIL {2}README\\.md:${line} {2}command script \\.\\./\\.\\./scripts/${script}\\.mjs \\(not found from fixtures/levels/\\)$`, "m"),
+    );
+  }
+  assert.doesNotMatch(result.stdout, /elsewhere/);
+  assert.match(result.stdout, /^summary: 4 paths checked, 4 broken$/m);
+});
+
 test("outside a shell block, does not resolve a cd that opens a subshell", (t) => {
   const root = scratchRepo(t, {
     "fixtures/levels/README.md": "# Levels\n",
@@ -170,7 +203,7 @@ test("outside a shell block, does not resolve a cd that opens a subshell", (t) =
       "(cd fixtures/levels && node ../../scripts/check-doc-links.mjs .)",
       "(cd fixtures/levels && node ../../scripts/nope.mjs .)",
       "$ ( cd fixtures/levels && node ../../scripts/nope.mjs . )",
-      "OUT=$(cd fixtures/levels && node ../../scripts/nope.mjs .) && node scripts/nope.mjs .",
+      "OUT=$(cd fixtures/levels && node ../../scripts/nope.mjs .) && node scripts/after.mjs .",
       "node scripts/before.mjs; (cd fixtures/levels && node ../../scripts/nope.mjs .)",
       "```",
       "",
@@ -183,8 +216,45 @@ test("outside a shell block, does not resolve a cd that opens a subshell", (t) =
   const result = runCheck(root);
   assert.equal(result.status, 1, result.stdout + result.stderr);
   assert.doesNotMatch(result.stdout, /check-doc-links\.mjs|nope\.mjs/);
+  assert.match(result.stdout, /^FAIL {2}README\.md:7 {2}command script scripts\/after\.mjs \(not found from the repo root\)$/m);
   assert.match(result.stdout, /^FAIL {2}README\.md:8 {2}command script scripts\/before\.mjs \(not found from the repo root\)$/m);
-  assert.match(result.stdout, /^summary: 1 paths checked, 1 broken$/m);
+  assert.match(result.stdout, /^summary: 2 paths checked, 2 broken$/m);
+});
+
+// A subshell that a `cd` opens is set aside up to its closing parenthesis, and
+// no further. From the repo root, the script path inside each subshell below
+// does not exist, so a line that reads it as a command there is a FAIL line.
+test("outside a shell block, checks the commands before and after a subshell that a cd opens", (t) => {
+  const inside = "cd fixtures/levels && node ../../scripts/check-doc-links.mjs .";
+  const root = scratchRepo(t, {
+    "fixtures/levels/README.md": "# Levels\n",
+    "README.md": [
+      "# Demo",
+      "",
+      "```text",
+      "node scripts/first.mjs $(cd fixtures && pwd)",
+      "echo $(cd fixtures) && node scripts/second.mjs",
+      `diff <(${inside}) out.txt`,
+      `tee >(${inside}) | node scripts/third.mjs`,
+      `X=(${inside})`,
+      `(cd fixtures/levels && (node ../../scripts/check-doc-links.mjs .) && node ../../scripts/check-doc-links.mjs .) && node scripts/fourth.mjs`,
+      "cd fixtures && node ../scripts/fifth.mjs $(cd levels && pwd); node ../scripts/check-doc-links.mjs",
+      "node $(cd fixtures && pwd)/sixth.mjs",
+      "```",
+      "",
+    ].join("\n"),
+  });
+  const result = runCheck(root);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  for (const [line, script] of [[4, "first"], [5, "second"], [7, "third"], [9, "fourth"]]) {
+    assert.match(
+      result.stdout,
+      new RegExp(`^FAIL {2}README\\.md:${line} {2}command script scripts/${script}\\.mjs \\(not found from the repo root\\)$`, "m"),
+    );
+  }
+  assert.match(result.stdout, /^FAIL {2}README\.md:10 {2}command script \.\.\/scripts\/fifth\.mjs \(not found from fixtures\/\)$/m);
+  assert.doesNotMatch(result.stdout, /check-doc-links\.mjs|sixth\.mjs/);
+  assert.match(result.stdout, /^summary: 6 paths checked, 5 broken$/m);
 });
 
 test("splits at parentheses in shell blocks only, and does not read a comment", (t) => {
@@ -316,6 +386,28 @@ test("bounds the cd steps followed on a long line", (t) => {
       `cd ${"d/".repeat(100_000)}; ${"node a.mjs; ".repeat(20_000)}`,
       `${"cd a; ".repeat(32)}node ${"../".repeat(32)}scripts/check-doc-links.mjs`,
       `${"cd a; ".repeat(33)}node ${"../".repeat(33)}scripts/check-doc-links.mjs`,
+      "```",
+      "",
+    ].join("\n"),
+  });
+  const started = Date.now();
+  const result = runCheck(root, { timeout: 3_000 });
+  assert.equal(result.error, undefined, `link check did not finish within 3 s (${Date.now() - started} ms)`);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /^summary: 1 paths checked, 0 broken$/m);
+});
+
+test("outside a shell block, scans a long line of subshells and placeholders in linear time", (t) => {
+  const root = scratchRepo(t, {
+    "README.md": [
+      "# Demo",
+      "",
+      "```text",
+      `${"(cd a && ".repeat(25_000)}node scripts/nope.mjs`,
+      `${"$(cd a) ".repeat(50_000)}; node scripts/check-doc-links.mjs`,
+      `${"( ".repeat(50_000)}node scripts/nope.mjs`,
+      `cd ${"<a>".repeat(50_000)}>/dev/null && node scripts/nope.mjs`,
+      `cd ${"<a".repeat(50_000)} && node scripts/nope.mjs`,
       "```",
       "",
     ].join("\n"),

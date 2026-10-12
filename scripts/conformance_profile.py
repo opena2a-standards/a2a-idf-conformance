@@ -81,7 +81,7 @@ README_CLAIM_MARKERS = ("it covers", "this repo")
 
 
 def readme_claim_errors() -> list[str]:
-    lines = (REPO_ROOT / "README.md").read_text().splitlines()
+    lines = (REPO_ROOT / "README.md").read_text(encoding="utf-8").splitlines()
     open_sections = [entry["specSection"] for entry in SUITE["notCovered"]]
     errors = []
     for section, term in UNVERIFIED_ENVELOPES.items():
@@ -116,21 +116,28 @@ COMPOSITION_CLAIM_DOCS = ("README.md", "fixtures/composition/README.md")
 COMPOSITION_CLAIM_MARKERS = ("composes with", "in combination with")
 
 
-def composed_layers() -> set[str]:
+def composed_layers(requirements: list[dict]) -> set[str]:
+    """The adjacent layers the composition fixtures compose, read from the
+    requirement entries built from them, so each fixture is parsed once."""
     composed = set()
-    for path in sorted((REPO_ROOT / "fixtures" / "composition").rglob("*.json")):
-        for entry in json.loads(path.read_text())["spec"]:
+    for requirement in requirements:
+        if requirement["fixtureType"] != "composition":
+            continue
+        for entry in requirement["specRefs"]:
+            # A spec entry that is not a JSON object names no layer.
+            if not isinstance(entry, dict):
+                continue
             for issue, (_, spec_ids, _) in ADJACENT_LAYERS.items():
                 if entry.get("ref") == A2A_ISSUE + issue or entry.get("id") in spec_ids:
                     composed.add(issue)
     return composed
 
 
-def composition_claim_errors() -> list[str]:
-    composed = composed_layers()
+def composition_claim_errors(requirements: list[dict]) -> list[str]:
+    composed = composed_layers(requirements)
     errors = []
     for doc in COMPOSITION_CLAIM_DOCS:
-        lines = (REPO_ROOT / doc).read_text().splitlines()
+        lines = (REPO_ROOT / doc).read_text(encoding="utf-8").splitlines()
         for number, line in enumerate(lines, start=1):
             for sentence in re.split(r"(?<=[.!?])\s+", line.lower()):
                 if not any(marker in sentence for marker in COMPOSITION_CLAIM_MARKERS):
@@ -155,7 +162,7 @@ AT_PRESENT = re.compile(r"\b(\d+) at present\b")
 
 
 def cosigners_baseline_errors(fixture_count: int) -> list[str]:
-    lines = (REPO_ROOT / "COSIGNERS.md").read_text().splitlines()
+    lines = (REPO_ROOT / "COSIGNERS.md").read_text(encoding="utf-8").splitlines()
     rows = [(n, line) for n, line in enumerate(lines, start=1) if line.startswith(COSIGNERS_BASELINE_ROW)]
     if len(rows) != 1:
         return [f"COSIGNERS.md: expected one baseline row starting '{COSIGNERS_BASELINE_ROW}', found {len(rows)}"]
@@ -190,10 +197,49 @@ REQUIRED_FIXTURE_FIELDS = {
 
 
 class FixtureError(Exception):
-    """A fixture does not decode or parse (a ValueError; the json module
-    accepts NaN and Infinity, and the RecursionError it raises on very deep
-    nesting is not caught), is not a JSON object, lacks a field the profile
-    is derived from, or has one of the wrong type; one line per fixture."""
+    """A fixture cannot be profiled; one line per fixture. It is not valid JSON
+    (bytes that are not UTF-8, a syntax error, or one of the constants NaN,
+    Infinity and -Infinity, which the json module accepts unless told not to),
+    is past a limit of this script (nesting too deep for the json module, an
+    integer of more digits than Python converts), is not a JSON object, lacks a
+    field the profile is derived from or has one of the wrong type, or holds a
+    value in such a field that cannot be written to the profile."""
+
+
+def reject_constant(name: str) -> None:
+    raise FixtureError(f"is not valid JSON ({name} is not a JSON value)")
+
+
+def parse_int(digits: str) -> int:
+    try:
+        return int(digits)
+    except ValueError:
+        # The only way the digits of a JSON integer fail to convert.
+        raise FixtureError(
+            f"holds an integer of more than {sys.get_int_max_str_digits()} digits, which Python "
+            "does not convert; this is a limit of this script, not a JSON error"
+        ) from None
+
+
+def read_fixture(path: Path) -> object:
+    try:
+        return json.loads(
+            path.read_text(encoding="utf-8"), parse_constant=reject_constant, parse_int=parse_int
+        )
+    except ValueError as err:
+        # JSONDecodeError, or UnicodeDecodeError for bytes that are not UTF-8.
+        raise FixtureError(f"is not valid JSON ({err})") from None
+    except RecursionError:
+        raise FixtureError(
+            "is nested too deeply for Python's json module to read; this is a limit of this "
+            "script, not a JSON error"
+        ) from None
+
+
+def encode(value: object) -> bytes:
+    """`value` as the bytes conformance.json holds for it. Raises instead of
+    writing text that is not JSON (a float that is not finite) or not UTF-8."""
+    return (json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
 
 
 def fixture_field_error(fx: object) -> str | None:
@@ -213,6 +259,43 @@ def fixture_field_error(fx: object) -> str | None:
     return "; ".join(problems) or None
 
 
+def requirement_entry(rel: Path, fx: dict) -> dict:
+    """The requirement entry derived from one fixture, known to be writable."""
+    try:
+        expected = fx["expected"]
+        outcome = expected.get("verifyResult", "ACCEPT")
+        if expected.get("rejectCategory"):
+            outcome = f"REJECT[{expected['rejectCategory']}]"
+        entry = {
+            "fixture": f"fixtures/{rel.as_posix()}",
+            "name": fx["name"],
+            "fixtureType": fixture_type(rel),
+            "level": "MUST",
+            "specRefs": fx["spec"],
+            "expected": outcome,
+            "description": fx["description"],
+        }
+        # Encoded as deeply nested as it is in the profile, so an entry that
+        # encodes here encodes there, and a failure names its fixture.
+        encode({"requirements": [entry]})
+    except RecursionError:
+        raise FixtureError(
+            'cannot be written to the profile: "spec" or "expected" is nested too deeply for '
+            "Python's json module; this is a limit of this script, not a JSON error"
+        ) from None
+    except UnicodeEncodeError as err:
+        raise FixtureError(
+            'cannot be written to the profile: "name", "description", "spec" or "expected" holds '
+            f"a lone surrogate (\\u{ord(err.object[err.start]):04x}), which UTF-8 cannot encode"
+        ) from None
+    except ValueError:
+        raise FixtureError(
+            'cannot be written to the profile: "spec" or "expected" holds a number too large for '
+            "a Python float; this is a limit of this script, not a JSON error"
+        ) from None
+    return entry
+
+
 def build() -> dict:
     requirements = []
     errors = []
@@ -220,30 +303,13 @@ def build() -> dict:
     for path in sorted(fixtures_root.rglob("*.json")):
         rel = path.relative_to(fixtures_root)
         try:
-            fx = json.loads(path.read_text())
-        except ValueError as err:
-            # JSONDecodeError, or UnicodeDecodeError for bytes that are not text.
-            errors.append(f"fixtures/{rel.as_posix()}: is not valid JSON ({err})")
-            continue
-        error = fixture_field_error(fx)
-        if error is not None:
-            errors.append(f"fixtures/{rel.as_posix()}: {error}")
-            continue
-        expected = fx["expected"]
-        outcome = expected.get("verifyResult", "ACCEPT")
-        if expected.get("rejectCategory"):
-            outcome = f"REJECT[{expected['rejectCategory']}]"
-        requirements.append(
-            {
-                "fixture": f"fixtures/{rel.as_posix()}",
-                "name": fx["name"],
-                "fixtureType": fixture_type(rel),
-                "level": "MUST",
-                "specRefs": fx["spec"],
-                "expected": outcome,
-                "description": fx["description"],
-            }
-        )
+            fx = read_fixture(path)
+            error = fixture_field_error(fx)
+            if error is not None:
+                raise FixtureError(error)
+            requirements.append(requirement_entry(rel, fx))
+        except FixtureError as err:
+            errors.append(f"fixtures/{rel.as_posix()}: {err}")
     if errors:
         raise FixtureError("\n".join(errors))
     profile = dict(SUITE)
@@ -257,17 +323,21 @@ def main() -> int:
     except FixtureError as err:
         print(err)
         return 1
-    rendered = json.dumps(profile, indent=2, ensure_ascii=False) + "\n"
+    # The whole profile is encoded before conformance.json is opened, so a
+    # profile that cannot be encoded leaves the file as it was.
+    rendered = encode(profile)
     if "--check" in sys.argv:
         if not OUT.exists():
             print("conformance.json missing; run scripts/conformance_profile.py")
             return 1
-        if OUT.read_text() != rendered:
+        # Bytes, not text in the locale's encoding. A checkout that converts
+        # line endings to CRLF is still current.
+        if OUT.read_bytes().replace(b"\r\n", b"\n") != rendered:
             print("conformance.json is stale; run scripts/conformance_profile.py")
             return 1
         errors = (
             readme_claim_errors()
-            + composition_claim_errors()
+            + composition_claim_errors(profile["requirements"])
             + cosigners_baseline_errors(len(profile["requirements"]))
         )
         if errors:
@@ -275,8 +345,8 @@ def main() -> int:
             return 1
         print("conformance.json is current")
         return 0
-    OUT.write_text(rendered)
-    print(f"wrote conformance.json ({len(build()['requirements'])} requirements)")
+    OUT.write_bytes(rendered)
+    print(f"wrote conformance.json ({len(profile['requirements'])} requirements)")
     return 0
 
 

@@ -949,18 +949,24 @@ def schema_violation(schema: dict[str, Any], value: Any, path: str) -> str | Non
 # --- driver -----------------------------------------------------------------------
 
 
-_JSON_SCAN = json.JSONDecoder().scan_once
+def _reject_constant(name: str) -> None:
+    # json.loads reads NaN, Infinity and -Infinity as numbers. They are not JSON,
+    # and JSON.parse in verify.mjs raises on them.
+    raise ValueError(f"fixture is not valid JSON: {name} is not a JSON value")
+
+
+_JSON_SCAN = json.JSONDecoder(parse_constant=_reject_constant).scan_once
 _JSON_WHITESPACE = re.compile(r"[ \t\n\r]*")
 
 
 def _load_json(text: str) -> Any:
-    """json.loads(text), without recursion. json.loads recurses once per level
-    of nesting and raises past a depth that depends on the interpreter (fewer
-    than 1,000 levels on CPython 3.11, fewer than 10,000 on 3.12 and 3.13),
-    where JSON.parse in verify.mjs reaches a verdict. Here the open arrays and
-    objects are kept on a list, and every string, number and literal is read
-    by the json module's own scanner, so each value decodes as json.loads
-    decodes it."""
+    """json.loads(text, parse_constant=_reject_constant), without recursion.
+    json.loads recurses once per level of nesting and raises past a depth that
+    depends on the interpreter (fewer than 1,000 levels on CPython 3.11, fewer
+    than 10,000 on 3.12 and 3.13), where JSON.parse in verify.mjs reaches a
+    verdict. Here the open arrays and objects are kept on a list, and every
+    string, number and literal is read by the json module's own scanner, so
+    each value decodes as json.loads decodes it."""
     skip = _JSON_WHITESPACE.match
     # Each open container with the key its next value is stored under (None
     # for an array).

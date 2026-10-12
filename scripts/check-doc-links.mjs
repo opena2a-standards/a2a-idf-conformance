@@ -11,7 +11,9 @@
 //     labelled as shell (`bash`, `sh`, ...), a `cd` inside a subshell,
 //     `(cd <dir> && node ...)`, moves only the commands up to the closing
 //     parenthesis; other blocks do not split at parentheses, so there a `cd`
-//     that opens a subshell is one this check cannot resolve;
+//     that opens a subshell is one this check cannot resolve: the commands
+//     from it to the closing parenthesis are not checked, those before the
+//     subshell and after it are;
 //   - the files a `cosign sign-blob` command writes, in a fenced code block that tells
 //     the reader to commit them under `.sigstore/<org>/`, which must not be ignored by
 //     git at that location (`<placeholder>` segments are checked as `example-org`).
@@ -43,14 +45,18 @@ const SHELL_COMMAND_BOUNDARY = /(&&|[;|()])/;
 const SHELL_LANGUAGES = new Set(["bash", "sh", "zsh", "ksh", "shell", "console", "shell-session", "sh-session"]);
 const SCRIPT_COMMAND = /^(?:\$\s+)?(?:node|python3?)\s+(\S+\.(?:mjs|cjs|js|py))(?:\s|$)/;
 const CD_COMMAND = /^(?:\$\s+)?cd(?:\s+(.*))?$/s;
-// A `cd` that opens a subshell, `(cd <dir>` or `$(cd <dir>`, in a block that
-// does not split at parentheses.
-const SUBSHELL_CD = /(?:^|[\s=$])\(\s*cd(?:\s|$)/;
+// A `(` that opens a subshell starting with `cd`: at the start of the line or
+// after a blank, `=`, `$`, `<` or `>`, as in `(cd <dir>`, `X=(cd <dir>`,
+// `$(cd <dir>`, `<(cd <dir>` and `>(cd <dir>`. Tried at one `(` at a time.
+const SUBSHELL_OPENER = /[\s=$<>]/;
+const SUBSHELL_CD = /\(\s*cd(?:\s|$)/y;
 // A redirection word: `2>/dev/null`, `>>log`, `&>out`, `2>&1`, `<in`. With
 // nothing after the operator, the next word is its target.
 const REDIRECT = /^(?:\d+|&)?(?:<<<|<<-?|<>|<&|>&|>>|>\||<|>)(.*)$/;
-// A `<name>` placeholder the reader fills in, as in `cd <your-clone>`.
+// A `<name>` placeholder the reader fills in, as in `cd <your-clone>`: anywhere
+// in a word, and at one position of it.
 const PLACEHOLDER = /<[A-Za-z][^<>\s]*>/;
+const PLACEHOLDER_HERE = new RegExp(PLACEHOLDER, "y");
 // Bounds the work on one line, which otherwise grows with the square of its
 // length: a `cd` past the 32nd on a line, or one that leads to a path longer
 // than 4096 characters (PATH_MAX on Linux), is not followed.
@@ -213,21 +219,65 @@ function stripComment(line) {
   return line;
 }
 
+// The line of a block that is not split at parentheses, with each subshell that
+// starts with `cd` replaced by a blank, from its `(` to the `)` that closes it
+// (or to the end of the line). Where the `cd` leads is not followed there, so
+// the commands inside are not checked; the commands before the subshell and
+// after it are not moved by its `cd`, and are. Parentheses are counted as
+// written, quoted or not, as a shell block splits at them. One pass.
+function withoutCdSubshells(line) {
+  let out = "";
+  let from = 0;
+  let depth = 0;
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === "(") {
+      if (depth > 0) {
+        depth++;
+      } else if (i === 0 || SUBSHELL_OPENER.test(line[i - 1])) {
+        SUBSHELL_CD.lastIndex = i;
+        if (!SUBSHELL_CD.test(line)) continue;
+        out += `${line.slice(from, i)} `;
+        depth = 1;
+      }
+    } else if (line[i] === ")" && depth > 0 && --depth === 0) {
+      from = i + 1;
+    }
+  }
+  return depth > 0 ? out : out + line.slice(from);
+}
+
+// Where the first redirection starts in a word of a `cd` command, or -1: 0 for
+// a word of its own (`2>/dev/null`), the end of the operand for one written
+// against it (`fixtures>/dev/null`, `fixtures&>/dev/null`). A `<` that opens a
+// `<placeholder>` is not an operator: `fixtures/<level>` has no redirection,
+// and `2><log>` is one whose target is the placeholder.
+function redirectionStart(word) {
+  const operator = /&?[<>]/g;
+  for (let first = true, match; (match = operator.exec(word)) !== null; first = false) {
+    const bracket = operator.lastIndex - 1;
+    PLACEHOLDER_HERE.lastIndex = bracket;
+    const placeholder = PLACEHOLDER_HERE.exec(word);
+    if (placeholder === null) return first && REDIRECT.test(word) ? 0 : match.index;
+    operator.lastIndex = bracket + placeholder[0].length;
+  }
+  return -1;
+}
+
 // The directory a `cd` moves to (`cd <dir>`, `cd -- <dir>`, with any
 // redirections such as `2>/dev/null` set aside), or null when this check cannot
 // resolve it: no operand or more than one, an option other than a leading `--`,
-// a `<placeholder>`, or a target that needs the shell (`cd`, `cd ~`,
-// `cd "$DIR"`, `cd -`, `cd -P <dir>`).
+// a `<placeholder>` in the directory, or a target that needs the shell (`cd`,
+// `cd ~`, `cd "$DIR"`, `cd -`, `cd -P <dir>`).
 function cdTarget(args = "") {
   const words = args.split(/\s+/).filter(Boolean);
   const operands = [];
   for (let i = 0; i < words.length; i++) {
     const word = words[i];
-    if (PLACEHOLDER.test(word)) return null;
-    // A redirection is a word of its own (`2>/dev/null`) or follows the operand
-    // without a space (`fixtures>/dev/null`).
-    const at = REDIRECT.test(word) ? 0 : word.search(/&?[<>]/);
-    if (at !== 0) operands.push(at < 0 ? word : word.slice(0, at));
+    const at = redirectionStart(word);
+    const operand = at < 0 ? word : word.slice(0, at);
+    // The placeholder rule is for the directory: a redirection target can be one.
+    if (PLACEHOLDER.test(operand)) return null;
+    if (at !== 0) operands.push(operand);
     if (at >= 0 && word.slice(at).match(REDIRECT)[1] === "" && ++i === words.length) return null;
   }
   if (operands[0] === "--") operands.shift();
@@ -271,7 +321,11 @@ function checkFile(relPath) {
         // `( ... )` or `$( ... )` moves the commands up to the closing `)` only.
         const outer = [];
         let cdSteps = 0;
-        for (const piece of stripComment(line).split(shell ? SHELL_COMMAND_BOUNDARY : COMMAND_BOUNDARY)) {
+        const command = stripComment(line);
+        // Outside a shell block the parentheses stay in the piece, so a `cd`
+        // that opens a subshell is not followed: the subshell is set aside.
+        const pieces = shell ? command.split(SHELL_COMMAND_BOUNDARY) : withoutCdSubshells(command).split(COMMAND_BOUNDARY);
+        for (const piece of pieces) {
           if (piece === "(") {
             outer.push(bases);
             continue;
@@ -281,15 +335,12 @@ function checkFile(relPath) {
             continue;
           }
           const part = piece.trim();
-          // Outside a shell block the parentheses stay in the piece, so where a
-          // subshell ends is not followed: a `cd` that opens one cannot be resolved.
-          const subshellCd = !shell && SUBSHELL_CD.test(part);
-          const cd = subshellCd ? null : part.match(CD_COMMAND);
-          if (cd || subshellCd) {
+          const cd = part.match(CD_COMMAND);
+          if (cd) {
             // A target this check cannot resolve, or one past the bounds, ends
             // the checks for the rest of the line, or of the subshell it is in,
             // instead of guessing.
-            const target = ++cdSteps > MAX_CD_STEPS || subshellCd ? null : cdTarget(cd[1]);
+            const target = ++cdSteps > MAX_CD_STEPS ? null : cdTarget(cd[1]);
             bases =
               target === null || bases.length === 0
                 ? []
