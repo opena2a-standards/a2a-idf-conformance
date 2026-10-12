@@ -336,7 +336,7 @@ function verifyCompositionFixture(fixture, path) {
       observed = {
         verdict: "REJECT",
         category: "CROSS_SUITE_MISMATCH",
-        reason: `verified signature does not byte-match Envoys ${cse.vector}`,
+        reason: `verified signature does not byte-match Envoys ${reasonText(cse.vector)}`,
       };
     }
   }

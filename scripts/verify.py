@@ -349,7 +349,8 @@ def verify_composition_fixture(fixture: dict[str, Any]) -> tuple[bool, str | Non
     elif cse.get("byteIdentical") is True:
         if base64.b64encode(sig).decode("ascii") != cse["expectedSignatureBase64"]:
             verdict, category = "REJECT", "CROSS_SUITE_MISMATCH"
-            reason = f"verified signature does not byte-match Envoys {cse.get('vector')}"
+            vector = _reason_text(cse.get("vector", _MISSING))
+            reason = f"verified signature does not byte-match Envoys {vector}"
 
     ok, observed, lines = gate_verdict(expected, verdict, category)
     if not ok and reason and lines:

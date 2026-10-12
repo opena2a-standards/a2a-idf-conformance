@@ -235,6 +235,53 @@ for (const [label, member, holder, category, reason] of [
   });
 }
 
+// The CROSS_SUITE_MISMATCH reason of a composition fixture quotes
+// crossSuiteEquivalence.envoys.vector, which the schema does not type, in the
+// same way. Each runtime's own text for a vector that is not a string differed
+// (1e-7 and 1e-07, 1 and 1.0, an empty string and [] for an empty array,
+// undefined and None for a missing vector), and converting a deeply nested one
+// to text raised: Array.prototype.toString in verify.mjs on an array nested
+// 5,000 levels, repr() in verify.py on an array or an object nested 200,000.
+// The fixture pins REJECT, so each copy pins ACCEPT for the reason to be
+// printed.
+const DEPTH = 200_000;
+
+test("the cross-suite mismatch reason words a vector that is not a string the same way in both verifiers", (t) => {
+  const variants = {};
+  const expected = {};
+  for (const [kind, literal, text] of [
+    ...VALUE_KINDS,
+    ["empty-array", "[]", "a JSON array"],
+    ["float-one", "1.0", "a JSON integer"],
+    ["negative-zero", "-0.0", "a JSON integer"],
+    ["twenty-digits", "12345678901234567890", "a JSON integer"],
+    ["small-fraction", "1e-7", "a JSON number"],
+    ["integer-of-5000-digits", "7".repeat(5000), "a JSON number"],
+    ["deeply-nested-array", "[".repeat(DEPTH) + "]".repeat(DEPTH), "a JSON array"],
+    ["deeply-nested-object", '{"a":'.repeat(DEPTH) + "{}" + "}".repeat(DEPTH), "a JSON object"],
+  ]) {
+    variants[`${kind}.json`] = literalVariant(
+      "fixtures/composition/aim-did-rfc9421/cross-suite-mismatch.json",
+      (fx) => {
+        fx.expected.verifyResult = "ACCEPT";
+        delete fx.expected.rejectCategory;
+        if (literal === undefined) delete fx.crossSuiteEquivalence.envoys.vector;
+        else fx.crossSuiteEquivalence.envoys.vector = PLACEHOLDER;
+      },
+      literal,
+    );
+    expected[`${kind}.json`] = [
+      "FAIL",
+      "observed: REJECT[CROSS_SUITE_MISMATCH]",
+      "stage:  verdict",
+      `reason: verify result REJECT[CROSS_SUITE_MISMATCH] != expected ACCEPT (verified signature does not byte-match Envoys ${text})`,
+    ];
+  }
+  const blocks = runOverVariants(t, variants);
+  assert.deepEqual(blocks.node, expected);
+  assert.deepEqual(blocks.python, blocks.node);
+});
+
 // A schema reason writes a number as text only when it is a safe integer, which
 // both runtimes write the same way, and names any other number by its JSON
 // type. JSON.stringify and json.dumps wrote 1 and 1.0, null and Infinity, 0 and
