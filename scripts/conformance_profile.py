@@ -68,6 +68,36 @@ SUITE = {
 }
 
 
+# README.md coverage claims must not outrun `notCovered`. While one of these
+# sections is listed there, any README.md line that states this repository's
+# coverage and names the envelope must mark it "(unverified)". Removing the
+# notCovered entry (once the verifiers check the envelope) lifts the requirement.
+UNVERIFIED_ENVELOPES = {
+    "§7 Delegation chains": "delegation chain",
+    "§8 Bilateral receipts": "bilateral receipt",
+}
+README_CLAIM_MARKERS = ("it covers", "this repo")
+
+
+def readme_claim_errors() -> list[str]:
+    lines = (REPO_ROOT / "README.md").read_text().splitlines()
+    open_sections = [entry["specSection"] for entry in SUITE["notCovered"]]
+    errors = []
+    for section, term in UNVERIFIED_ENVELOPES.items():
+        if not any(s.startswith(section) for s in open_sections):
+            continue
+        for number, line in enumerate(lines, start=1):
+            low = line.lower()
+            if not any(marker in low for marker in README_CLAIM_MARKERS):
+                continue
+            if term in low and "(unverified)" not in low:
+                errors.append(
+                    f"README.md:{number} claims {term} coverage, but notCovered lists "
+                    f"'{section}'; mark it \"(unverified)\""
+                )
+    return errors
+
+
 def fixture_type(rel: Path) -> str:
     top = rel.parts[0]
     return {"composition": "composition", "levels": "level"}.get(top, top)
@@ -107,6 +137,10 @@ def main() -> int:
             return 1
         if OUT.read_text() != rendered:
             print("conformance.json is stale; run scripts/conformance_profile.py")
+            return 1
+        claim_errors = readme_claim_errors()
+        if claim_errors:
+            print("\n".join(claim_errors))
             return 1
         print("conformance.json is current")
         return 0

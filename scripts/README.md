@@ -8,7 +8,7 @@ Reference tooling for producing and consuming A2A-IDF conformance fixtures.
 - [`verify.py`](./verify.py) — Python verifier. Single dependency: the [`cryptography`](https://pypi.org/project/cryptography/) package. Same interface, same check order, and same accept/reject/category decisions as the Node verifier on every fixture.
 - [`generate-fixtures.mjs`](./generate-fixtures.mjs) — deterministic fixture generator. Regenerates every file under `fixtures/` and `vectors/` plus `MANIFEST.sha256` from the RFC 8032 §7.1 seeds and the templates in the script. Self-checks that the composition signatures byte-match the pinned Envoys §14 vectors. CI runs it and fails on any diff, so committed fixtures cannot drift from their documented inputs.
 - [`parity/parity.py`](./parity/parity.py) — cross-implementation parity gate. Runs both verifiers over the fixture set and fails on any disagreement in gate status, verdict, or reject category.
-- [`conformance_profile.py`](./conformance_profile.py) — generates (or `--check`s) `conformance.json`, the machine-readable profile derived from the fixtures.
+- [`conformance_profile.py`](./conformance_profile.py) — generates (or `--check`s) `conformance.json`, the machine-readable profile derived from the fixtures. `--check` also fails when a coverage claim in the top-level `README.md` names an envelope that `notCovered` still lists, unless the claim marks it "(unverified)".
 
 ## Install
 

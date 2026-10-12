@@ -11,8 +11,8 @@ A2A-IDF identity-framework composition fixtures. Each fixture exercises:
 | Fixture | Expected | Wire vector | Envelope |
 |---|---|---|---|
 | [`signature-alone.json`](./signature-alone.json) | ACCEPT | Envoys §14 Vector 1 (GET `/api/health`, empty body) | none |
-| [`bilateral-receipt.json`](./bilateral-receipt.json) | ACCEPT | Envoys §14 Vector 2 (POST `/api/task`, JSON body) | APS bilateral receipt v1 (initiator wire signature plus responder receipt acknowledgment over JCS-canonical payload) |
-| [`delegation-chain-3link.json`](./delegation-chain-3link.json) | ACCEPT | Envoys §14 Vector 3 (POST `/api/echo`, `{}` body) | APS delegation chain v1 (3 links: 1 root plus 2 derived; scope monotonic narrow; expiry monotonic non-increase; `previousSignature` binding) |
+| [`bilateral-receipt.json`](./bilateral-receipt.json) | ACCEPT | Envoys §14 Vector 2 (POST `/api/task`, JSON body) | APS bilateral receipt v1 shape, unverified (initiator wire signature plus the JCS receipt payload the responder would sign; no responder signature is present) |
+| [`delegation-chain-3link.json`](./delegation-chain-3link.json) | ACCEPT | Envoys §14 Vector 3 (POST `/api/echo`, `{}` body) | APS delegation chain v1 shape, unverified (3 links: 1 root plus 2 derived; scope narrowing and expiry non-increase pinned as data; the links carry no signatures, so the `previousSignatureRef` binding points at fields that are not present) |
 | [`signature-tampered.json`](./signature-tampered.json) | REJECT[SIGNATURE_INVALID] | Vector 1 with altered signature bytes | none |
 | [`key-substituted.json`](./key-substituted.json) | REJECT[SIGNATURE_INVALID] | Vector 1 signature, DID Document serving the RFC 8032 §7.1 Test 2 key instead | none |
 | [`body-tampered.json`](./body-tampered.json) | REJECT[SIGNATURE_INVALID] | Vector 2 signature over a body later modified (Content-Digest recomputed, no re-sign) | none |

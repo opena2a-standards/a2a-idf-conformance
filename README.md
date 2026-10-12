@@ -2,7 +2,7 @@
 
 Canonical conformance suite for the **A2A-IDF** (Agent-to-Agent Identity Framework) specification proposed in [a2aproject/A2A#1496](https://github.com/a2aproject/A2A/pull/1496).
 
-Implementations of A2A-IDF run the fixtures in this repository to verify byte-match interoperability against the reference vectors. The suite is intentionally narrow: it covers the identity-framework layer (verification levels, attestation array shape, delegation chain envelopes, message-signing wire format) and composes with adjacent conformance suites for the wire signature layer ([#1829](https://github.com/a2aproject/A2A/issues/1829)), identity-claim envelope layer ([#1786](https://github.com/a2aproject/A2A/issues/1786) CTEF), and delegation/continuity layer ([#1575](https://github.com/a2aproject/A2A/issues/1575) APS).
+Implementations of A2A-IDF run the fixtures in this repository to verify byte-match interoperability against the reference vectors. The suite is intentionally narrow: it covers the identity-framework layer (verification levels, attestation array shape, message-signing wire format, delegation chain and bilateral receipt envelope shapes (unverified)) and composes with adjacent conformance suites for the wire signature layer ([#1829](https://github.com/a2aproject/A2A/issues/1829)), identity-claim envelope layer ([#1786](https://github.com/a2aproject/A2A/issues/1786) CTEF), and delegation/continuity layer ([#1575](https://github.com/a2aproject/A2A/issues/1575) APS).
 
 ## Status
 
@@ -20,7 +20,7 @@ Byte-pinned and CI-enforced. Every fixture is pinned in [`MANIFEST.sha256`](./MA
 | Layer | Spec | Suite |
 |---|---|---|
 | Wire signature (per-message RFC 9421 + Ed25519) | [#1829](https://github.com/a2aproject/A2A/issues/1829) | [`envoys-rfc9421/`](https://github.com/aeoess/aps-conformance-suite) (external) |
-| **Identity framework (verification levels, attestations, delegation chains)** | **[#1496](https://github.com/a2aproject/A2A/pull/1496)** | **this repo** |
+| **Identity framework (verification levels, attestations, delegation chain envelope shapes (unverified))** | **[#1496](https://github.com/a2aproject/A2A/pull/1496)** | **this repo** |
 | Identity claims (CTEF) | [#1786](https://github.com/a2aproject/A2A/issues/1786) | external |
 | Delegation and continuity (APS) | [#1575](https://github.com/a2aproject/A2A/issues/1575) | external |
 
@@ -50,6 +50,8 @@ Three shapes per fixture, pinned to the RFC 8032 §7.1 keypair:
 1. Signature alone
 2. Signature wrapped in a bilateral receipt envelope
 3. Signature wrapped in a 3-link delegation chain
+
+The reference verifiers check the wire signature in all three shapes. The envelopes are pinned as data only: the chain links and the receipt carry no signatures, and neither verifier reads the `envelope` block, so a chain whose scope widens or whose expiry increases is still accepted. Envelope verification is listed under `notCovered` in [`conformance.json`](./conformance.json).
 
 These shapes parallel the `envoys-rfc9421/` fixtures hosted in `aeoess/aps-conformance-suite` so that any verifier passing both suites can demonstrate cross-implementation byte-match.
 
