@@ -16,7 +16,7 @@
 // Exit code: 0 if every fixture's expected verdict (and reject category,
 // when pinned) is met, else 1.
 
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
 
@@ -336,7 +336,7 @@ function verifyCompositionFixture(fixture, path) {
       observed = {
         verdict: "REJECT",
         category: "CROSS_SUITE_MISMATCH",
-        reason: `verified signature does not byte-match Envoys ${cse.vector}`,
+        reason: `verified signature does not byte-match Envoys ${reasonText(cse.vector)}`,
       };
     }
   }
@@ -468,6 +468,16 @@ function reject(category, reason) {
   return { verdict: "REJECT", category, reason };
 }
 
+// A fixture value quoted in a reject reason: a string as it is, and any other
+// value by its JSON type, as verify.py words it. Each runtime converts a value
+// that is not a string to text in its own way, and Array.prototype.toString
+// recurses once per level of nesting, so it overflows the call stack on a
+// deeply nested array.
+function reasonText(v) {
+  if (typeof v === "string") return v;
+  return v === undefined ? "(missing)" : `a JSON ${jsonType(v)}`;
+}
+
 // Evaluate the identity declaration. Returns {verdict, category, reason}.
 // The check order is part of the cross-implementation contract. It is the
 // numbered list under "Check order" in fixtures/levels/README.md, which is not
@@ -484,10 +494,13 @@ function evaluateIdentity(fixture) {
   }
   const p = ext.params;
   if (!IDENTITY_LEVELS.includes(p.identityLevel)) {
-    return reject("SHAPE_INVALID", `unknown identityLevel: ${p.identityLevel}`);
+    return reject("SHAPE_INVALID", `unknown identityLevel: ${reasonText(p.identityLevel)}`);
   }
   if (p.agentId !== undefined && !(typeof p.agentId === "string" && AGENT_ID_URN_RE.test(p.agentId))) {
-    return reject("SHAPE_INVALID", `agentId is not a urn:a2a:agent:{domain}:{agent-name}:{version} URN: ${p.agentId}`);
+    return reject(
+      "SHAPE_INVALID",
+      `agentId is not a urn:a2a:agent:{domain}:{agent-name}:{version} URN: ${reasonText(p.agentId)}`,
+    );
   }
   const pk = p.publicKey;
   if (!pk || ed25519KeyFromJwk(pk) === null || !isNonEmptyString(pk.kid)) {
@@ -514,7 +527,7 @@ function evaluateDomainVerified(fixture, card, p, pk) {
   const domain = hostnameOf(card.provider?.url);
   if (domain === null) return reject("SHAPE_INVALID", "provider.url missing or unparseable");
   if (att.domain !== domain) {
-    return reject("DOMAIN_MISMATCH", `attestation domain ${att.domain} != provider domain ${domain}`);
+    return reject("DOMAIN_MISMATCH", `attestation domain ${reasonText(att.domain)} != provider domain ${domain}`);
   }
   const dnsTxt = fixture.evidence?.dnsTxt;
   if (!dnsTxt || !isNonEmptyString(dnsTxt.recordName) || !isNonEmptyString(dnsTxt.recordValue)) {
@@ -634,11 +647,17 @@ function jsonType(v) {
   return typeof v;
 }
 
-// A scalar as JSON text, and an array or an object by its JSON type, as
-// verify.py words a value (json.dumps there raises on a deeply nested value).
+// A string, a boolean, null and a safe integer as JSON text, and any other
+// value by its JSON type, as verify.py words a value: json.dumps there raises
+// on a deeply nested array or object, and the two runtimes write a number
+// outside the safe integers differently (1e-7 and 1e-07, null and Infinity for
+// 1e400, 12345678901234567000 and 12345678901234567890).
 function jsonText(v) {
   const type = jsonType(v);
-  return type === "array" || type === "object" ? `a JSON ${type}` : JSON.stringify(v);
+  if (type === "array" || type === "object" || (typeof v === "number" && !Number.isSafeInteger(v))) {
+    return `a JSON ${type}`;
+  }
+  return JSON.stringify(v);
 }
 
 function fieldPath(path, key) {
@@ -697,7 +716,8 @@ function verifyFixture(path) {
   return verifyCompositionFixture(fixture, path);
 }
 
-// A path whose status cannot be read (missing, a symlink loop) is not a directory.
+// Whether a path given on the command line is a directory, through a symlink
+// too. A path whose status cannot be read (missing, a symlink loop) is not one.
 function isDirectory(path) {
   try {
     return statSync(path).isDirectory();
@@ -706,10 +726,37 @@ function isDirectory(path) {
   }
 }
 
+// A directory met during the walk, which a symlink to a directory is not.
+function isRealDirectory(path) {
+  try {
+    return lstatSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// A `*.json` path that is not a directory once symlinks are followed, so a
+// symlink to a directory is not a fixture, or one whose status cannot be read
+// at all (a dangling symlink, a symlink loop), which is then reported as ERROR.
+// A path of another kind is listed whatever it is, so one that cannot be read
+// as a file (a socket) is reported as ERROR too, not passed over. A FIFO is
+// read as a file is: the read waits until a writer opens it.
+function isFixtureFile(path) {
+  if (!path.endsWith(".json")) return false;
+  try {
+    return !statSync(path).isDirectory();
+  } catch {
+    return true;
+  }
+}
+
 // The fixtures `arg` names, each with the error that kept it from being listed.
 // A path that is not a directory is returned as it is, so one that cannot be
 // read (missing, a symlink loop, no read permission) fails inside the
-// per-fixture loop and is reported as ERROR, as verify.py does. A directory that
+// per-fixture loop and is reported as ERROR, as verify.py does. A directory is
+// walked for `*.json` files without following symlinks to directories, as in
+// verify.py: a followed link lists the fixtures under it a second time, and
+// once more per level when it points at a parent directory. A directory that
 // cannot be listed is returned with its error, so a permissions problem is
 // reported as ERROR rather than read as a pass.
 function collectFixtures(arg) {
@@ -726,8 +773,8 @@ function collectFixtures(arg) {
     }
     for (const entry of entries) {
       const p = join(dir, entry);
-      if (isDirectory(p)) walk(p);
-      else if (p.endsWith(".json")) out.push({ path: p });
+      if (isRealDirectory(p)) walk(p);
+      else if (isFixtureFile(p)) out.push({ path: p });
     }
   };
   walk(abs);

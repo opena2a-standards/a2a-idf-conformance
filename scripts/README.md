@@ -27,7 +27,7 @@ python3 -m pip install cryptography  # or use your system package manager
 python3 scripts/verify.py fixtures
 ```
 
-Both verifiers accept fixture files or directories (walked recursively for `*.json`).
+Both verifiers accept fixture files or directories (walked recursively for `*.json`). A symlink to a directory met during the walk is not followed, so a fixture is not listed a second time under another name; a symlink to a fixture file is read, and a directory named on the command line is walked when it is a symlink.
 
 ## Output
 
@@ -54,7 +54,7 @@ ERROR /abs/path/to/fixture.json
       value type outside the fixture JCS domain: int
 ```
 
-`ERROR` means the verifier raised instead of reaching a verdict: unreadable JSON (in both verifiers that includes a fixture holding `NaN`, `Infinity` or `-Infinity`, which are not JSON), or an attestation value outside the minimal JCS domain (numbers, booleans, null). A fixture missing a required block is not an `ERROR`: it fails at stage `schema`. A malformed level-fixture field is not an `ERROR`: it resolves to `REJECT[SHAPE_INVALID]`. That includes a lone surrogate in an organization attestation, which cannot enter the JCS form the attestation is signed over. A directory that cannot be listed is an `ERROR` under its own path, so a permissions problem cannot read as a pass. Neither verifier recurses on a fixture's nesting to read it, to check it against its schema (a schema reason names an array or an object by its JSON type, not by its contents) or to write an attestation's JCS form, so in those steps nesting depth alone does not make either verifier raise. An `ERROR` counts as a fail.
+`ERROR` means the verifier raised instead of reaching a verdict: unreadable JSON (in both verifiers that includes a fixture holding `NaN`, `Infinity` or `-Infinity`, which are not JSON), or an attestation value outside the minimal JCS domain (numbers, booleans, null). A fixture missing a required block is not an `ERROR`: it fails at stage `schema`. A malformed level-fixture field is not an `ERROR`: it resolves to `REJECT[SHAPE_INVALID]`. That includes a lone surrogate in an organization attestation, which cannot enter the JCS form the attestation is signed over. A directory that cannot be listed is an `ERROR` under its own path, so a permissions problem cannot read as a pass. Neither verifier recurses on a fixture's nesting to read it, to check it against its schema (a schema reason names an array or an object by its JSON type, not by its contents), to word a reject reason (it quotes a string and names any other value by its JSON type, as in `unknown identityLevel: a JSON array`) or to write an attestation's JCS form, so in those steps nesting depth alone does not make either verifier raise. Nor does the length of an integer: both verifiers read an integer beyond the range of a double as an infinite number, which is not a JSON integer. A schema reason writes a number only when it is an integer of at most 2^53 - 1 in magnitude and names any other number by its JSON type (`a JSON integer`, `a JSON number`), so the two verifiers print the same reason. An `ERROR` counts as a fail.
 
 The final line is `summary: N pass, M fail (T fixtures)`. Exit code is 0 if every fixture met its expected verdict (and reject category, when pinned), else 1. The parity gate parses the `PASS`/`FAIL`/`ERROR` lines and the `observed:` lines to assert cross-implementation agreement; an `ERROR` in one verifier and a verdict in the other is reported as a divergence.
 
@@ -83,10 +83,10 @@ node --test scripts/test/*.test.mjs
 ```
 
 - [`parity/test_parity.py`](./parity/test_parity.py) — the parity gate: output parsing, the `--verifier` option, the pinned-outcome check.
-- [`parity/test_verifier_agreement.py`](./parity/test_verifier_agreement.py) — both reference verifiers on inputs no fixture pins: further spellings of each provider-domain rule, lone surrogates, and members nested deeper than `json.loads` reads.
+- [`parity/test_verifier_agreement.py`](./parity/test_verifier_agreement.py) — both reference verifiers on inputs no fixture pins: further spellings of each provider-domain rule, lone surrogates, members nested deeper than `json.loads` reads, and an integer of more digits than Python's `int()` converts.
 - [`parity/test_doc_links.py`](./parity/test_doc_links.py) — the `.sigstore/<org>/` check of `check-doc-links.mjs`.
 - [`parity/test_fixture_schema.py`](./parity/test_fixture_schema.py) — the `schema` stage of both verifiers: removes each required field (and alters typed or enumerated ones) in copies of committed fixtures and asserts that both verifiers fail them at stage `schema` while the unmodified copies pass. When the `jsonschema` package is installed it also checks the cases with a full JSON Schema validator.
-- [`test/`](./test/) — the path checks of `check-doc-links.mjs`, the `COSIGNERS.md` baseline count check of `conformance_profile.py --check`, and, in both verifiers, unpinned byte-identity claims and paths that cannot be read or listed.
+- [`test/`](./test/) — the path checks of `check-doc-links.mjs`, the `COSIGNERS.md` baseline count check of `conformance_profile.py --check`, and, in both verifiers, unpinned byte-identity claims, the wording of reasons that quote a fixture value, symlinks met during the walk, and paths that cannot be read or listed.
 
 Run both commands from the repository root. They need Node, git and the Python `cryptography` package. Several tests run a copy of the suite in a temporary directory, so none of them writes to `fixtures/`.
 
