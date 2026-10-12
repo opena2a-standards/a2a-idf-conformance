@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -98,6 +99,54 @@ def readme_claim_errors() -> list[str]:
     return errors
 
 
+# Composition claims must not outrun the fixtures. An adjacent layer counts as
+# composed once a fixture under fixtures/composition/ carries a `spec` entry
+# for it: the layer's a2aproject/A2A issue as `ref`, or one of the ids below.
+# Until then, a sentence in these documents that says the suite composes with
+# adjacent layers must not name the layer; state it in a sentence of its own
+# as not yet composed.
+A2A_ISSUE = "https://github.com/a2aproject/A2A/issues/"
+ADJACENT_LAYERS = {
+    # issue: (layer, fixture spec ids, pattern that names the layer in prose)
+    "1829": ("wire signature", ("RFC 9421", "Envoys signature/v1"), r"wire[- ]signature"),
+    "1786": ("identity claims (CTEF)", ("CTEF",), r"ctef|identity[- ]claims?"),
+    "1575": ("delegation and continuity (APS)", ("APS",), r"aps|delegation(?:/| and )continuity"),
+}
+COMPOSITION_CLAIM_DOCS = ("README.md", "fixtures/composition/README.md")
+COMPOSITION_CLAIM_MARKERS = ("composes with", "in combination with")
+
+
+def composed_layers() -> set[str]:
+    composed = set()
+    for path in sorted((REPO_ROOT / "fixtures" / "composition").rglob("*.json")):
+        for entry in json.loads(path.read_text())["spec"]:
+            for issue, (_, spec_ids, _) in ADJACENT_LAYERS.items():
+                if entry.get("ref") == A2A_ISSUE + issue or entry.get("id") in spec_ids:
+                    composed.add(issue)
+    return composed
+
+
+def composition_claim_errors() -> list[str]:
+    composed = composed_layers()
+    errors = []
+    for doc in COMPOSITION_CLAIM_DOCS:
+        lines = (REPO_ROOT / doc).read_text().splitlines()
+        for number, line in enumerate(lines, start=1):
+            for sentence in re.split(r"(?<=[.!?])\s+", line.lower()):
+                if not any(marker in sentence for marker in COMPOSITION_CLAIM_MARKERS):
+                    continue
+                for issue, (layer, _, pattern) in ADJACENT_LAYERS.items():
+                    if issue in composed:
+                        continue
+                    if re.search(rf"#{issue}\b|\b(?:{pattern})\b", sentence):
+                        errors.append(
+                            f"{doc}:{number} says the suite composes with the {layer} layer "
+                            f"(a2aproject/A2A#{issue}), but no fixture under fixtures/composition/ "
+                            f"carries a spec entry for it; state the layer as not yet composed"
+                        )
+    return errors
+
+
 def fixture_type(rel: Path) -> str:
     top = rel.parts[0]
     return {"composition": "composition", "levels": "level"}.get(top, top)
@@ -138,7 +187,7 @@ def main() -> int:
         if OUT.read_text() != rendered:
             print("conformance.json is stale; run scripts/conformance_profile.py")
             return 1
-        claim_errors = readme_claim_errors()
+        claim_errors = readme_claim_errors() + composition_claim_errors()
         if claim_errors:
             print("\n".join(claim_errors))
             return 1
