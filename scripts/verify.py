@@ -306,6 +306,16 @@ def verify_composition_fixture(fixture: dict[str, Any]) -> tuple[bool, str | Non
     except ValueError as exc:
         return False, None, ["stage:  public-key-extraction", f"reason: {exc}"]
 
+    # A byte-identity claim is only checkable against a pinned value, so a claim
+    # without one is a malformed fixture, never a skipped comparison.
+    cse = (fixture.get("crossSuiteEquivalence") or {}).get("envoys") or {}
+    if cse.get("byteIdentical") is True and not _is_nonempty_str(cse.get("expectedSignatureBase64")):
+        return False, None, [
+            "stage:  cross-suite-equivalence",
+            "reason: crossSuiteEquivalence.envoys.byteIdentical is true but "
+            "expectedSignatureBase64 is missing or empty",
+        ]
+
     # Verify Ed25519.
     sig = parse_signature_header(expected["signature"])
     if sig is None:
@@ -325,10 +335,9 @@ def verify_composition_fixture(fixture: dict[str, Any]) -> tuple[bool, str | Non
     # expected.signatureBase64, which a fixture can set independently of the
     # Signature header.
     verdict, category, reason = "ACCEPT", None, None
-    cse = (fixture.get("crossSuiteEquivalence") or {}).get("envoys") or {}
     if not verified:
         verdict, category = "REJECT", "SIGNATURE_INVALID"
-    elif cse.get("byteIdentical") is True and cse.get("expectedSignatureBase64"):
+    elif cse.get("byteIdentical") is True:
         if base64.b64encode(sig).decode("ascii") != cse["expectedSignatureBase64"]:
             verdict, category = "REJECT", "CROSS_SUITE_MISMATCH"
             reason = f"verified signature does not byte-match Envoys {cse.get('vector')}"
@@ -461,8 +470,9 @@ def _reject(category: str, reason: str) -> dict[str, Any]:
 def evaluate_identity(fixture: dict[str, Any]) -> dict[str, Any]:
     """Evaluate the identity declaration. Returns {verdict, category?, reason?}.
 
-    The check order is part of the cross-implementation contract: shape first,
-    then per-level binding checks, then cryptography, then validity window."""
+    The check order is part of the cross-implementation contract. It is the
+    numbered list under "Check order" in fixtures/levels/README.md, which is not
+    shape-first: some shape checks run between binding checks."""
     card = _as_dict(fixture.get("agentCard"))
     extensions = _as_dict(card.get("capabilities")).get("extensions")
     if not isinstance(extensions, list):

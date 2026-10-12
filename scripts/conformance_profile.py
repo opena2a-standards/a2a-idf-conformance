@@ -147,6 +147,33 @@ def composition_claim_errors() -> list[str]:
     return errors
 
 
+# The CI baseline row in COSIGNERS.md states the verifier summary as the fixture
+# count at the current commit ("N at present", once per verifier cell). It must
+# equal the number of fixtures, so adding a fixture cannot leave it stale.
+COSIGNERS_BASELINE_ROW = "| opena2a-org (self-cosigned baseline, CI) |"
+AT_PRESENT = re.compile(r"\b(\d+) at present\b")
+
+
+def cosigners_baseline_errors(fixture_count: int) -> list[str]:
+    lines = (REPO_ROOT / "COSIGNERS.md").read_text().splitlines()
+    rows = [(n, line) for n, line in enumerate(lines, start=1) if line.startswith(COSIGNERS_BASELINE_ROW)]
+    if len(rows) != 1:
+        return [f"COSIGNERS.md: expected one baseline row starting '{COSIGNERS_BASELINE_ROW}', found {len(rows)}"]
+    number, line = rows[0]
+    counts = [int(c) for c in AT_PRESENT.findall(line)]
+    if len(counts) != 2:
+        return [
+            f"COSIGNERS.md:{number} baseline row must state the fixture count as "
+            f"\"{fixture_count} at present\" in both verifier cells"
+        ]
+    return [
+        f"COSIGNERS.md:{number} baseline row states {count} at present, but fixtures/ "
+        f"holds {fixture_count} fixtures; update the row"
+        for count in counts
+        if count != fixture_count
+    ]
+
+
 def fixture_type(rel: Path) -> str:
     top = rel.parts[0]
     return {"composition": "composition", "levels": "level"}.get(top, top)
@@ -179,7 +206,8 @@ def build() -> dict:
 
 
 def main() -> int:
-    rendered = json.dumps(build(), indent=2, ensure_ascii=False) + "\n"
+    profile = build()
+    rendered = json.dumps(profile, indent=2, ensure_ascii=False) + "\n"
     if "--check" in sys.argv:
         if not OUT.exists():
             print("conformance.json missing; run scripts/conformance_profile.py")
@@ -187,9 +215,13 @@ def main() -> int:
         if OUT.read_text() != rendered:
             print("conformance.json is stale; run scripts/conformance_profile.py")
             return 1
-        claim_errors = readme_claim_errors() + composition_claim_errors()
-        if claim_errors:
-            print("\n".join(claim_errors))
+        errors = (
+            readme_claim_errors()
+            + composition_claim_errors()
+            + cosigners_baseline_errors(len(profile["requirements"]))
+        )
+        if errors:
+            print("\n".join(errors))
             return 1
         print("conformance.json is current")
         return 0

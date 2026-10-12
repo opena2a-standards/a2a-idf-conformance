@@ -3,15 +3,18 @@
 //   - inline links `[text](target)` and reference definitions `[ref]: target`,
 //     resolved against the Markdown file's directory (`/`-rooted targets against the
 //     repo root, as GitHub renders them);
-//   - the script argument of `node` / `python3` commands inside fenced code blocks,
-//     which must exist relative to the Markdown file's directory or the repo root
-//     (the two working directories a reader can be expected to run them from);
+//   - the script argument of each `node` / `python3` command inside fenced code
+//     blocks, including commands chained after `&&`, `||`, `;` or `|`. The script
+//     must exist relative to the Markdown file's directory or the repo root (the
+//     two working directories a reader can be expected to run them from), moved
+//     by any `cd <dir>` earlier on the same line;
 //   - the files a `cosign sign-blob` command writes, in a fenced code block that tells
 //     the reader to commit them under `.sigstore/<org>/`, which must not be ignored by
 //     git at that location (`<placeholder>` segments are checked as `example-org`).
 // URLs with a scheme and same-page `#anchor` links are skipped.
 //
-// Exit codes: 0 = every path resolves, 1 = at least one does not.
+// Exit codes: 0 = every path resolves, 1 = at least one does not, or the check
+// could not run (one `error:` line names the cause).
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -20,9 +23,13 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-const INLINE_LINK = /\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g;
+// Link text and destination exclude `[` and `]`, so a match attempt never runs
+// past the next bracket and a long line is scanned in linear time.
+const INLINE_LINK = /\[[^[\]]*\]\(\s*<?([^)\s>[\]]+)>?(?:\s+"[^"]*")?\s*\)/g;
 const REF_DEFINITION = /^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s|$)/;
-const SCRIPT_COMMAND = /^\s*(?:\$\s+)?(?:node|python3?)\s+(\S+\.(?:mjs|cjs|js|py))(?:\s|$)/;
+const COMMAND_SEPARATOR = /&&|\|\||[;|]/;
+const SCRIPT_COMMAND = /^(?:\$\s+)?(?:node|python3?)\s+(\S+\.(?:mjs|cjs|js|py))(?:\s|$)/;
+const CD_COMMAND = /^(?:\$\s+)?cd(?:\s+(\S+))?\s*$/;
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
 const SIGSTORE_DIR = /(?:^|[\s`'"(])(\.sigstore\/\S*?\/)(?=$|[\s`'")])/;
 const COSIGN_SIGN = /^\s*(?:\$\s+)?cosign\s+sign-blob\s/;
@@ -76,19 +83,40 @@ function checkCosignOutputs(block) {
 }
 
 function trackedMarkdown() {
-  const out = execFileSync("git", ["ls-files", "-z", "--", "*.md"], {
-    cwd: ROOT,
-    encoding: "utf8",
-  });
-  return out.split("\0").filter(Boolean);
+  try {
+    const out = execFileSync("git", ["ls-files", "-z", "--", "*.md"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return out.split("\0").filter(Boolean);
+  } catch (err) {
+    const cause =
+      err.code === "ENOENT" ? "git is not installed" : String(err.stderr ?? "").trim().split("\n")[0] || err.message;
+    console.error(
+      `error: git ls-files failed in ${ROOT} (${cause}); the check reads the list of tracked Markdown files from git, so run it in a git checkout`,
+    );
+    process.exit(1);
+  }
 }
 
 function isExternal(target) {
   return /^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("#");
 }
 
+// Returns the decoded path, or null when the target's percent-encoding is
+// malformed (a `%` not followed by two hex digits).
 function stripSuffix(target) {
-  return decodeURIComponent(target.replace(/[?#].*$/, ""));
+  try {
+    return decodeURIComponent(target.replace(/[?#].*$/, ""));
+  } catch (err) {
+    if (err instanceof URIError) return null;
+    throw err;
+  }
+}
+
+function describeBase(base) {
+  return base === ROOT ? "the repo root" : `${relative(ROOT, base)}/`;
 }
 
 function checkFile(relPath) {
@@ -120,12 +148,24 @@ function checkFile(relPath) {
 
       if (fence !== null) {
         block.push({ text: line, where });
-        const cmd = line.match(SCRIPT_COMMAND);
-        if (!cmd) return;
-        checked++;
-        const script = cmd[1];
-        if (!existsSync(resolve(dir, script)) && !existsSync(resolve(ROOT, script))) {
-          broken.push(`${where}  command script ${script} (not found from ${relative(ROOT, dir) || "."}/ or the repo root)`);
+        let bases = [...new Set([dir, ROOT])];
+        for (const segment of line.split(COMMAND_SEPARATOR)) {
+          const part = segment.trim();
+          const cd = part.match(CD_COMMAND);
+          if (cd) {
+            // A target this check cannot resolve (`cd`, `cd ~`, `cd "$DIR"`, `cd -`)
+            // ends the checks for the rest of the line instead of guessing.
+            const target = cd[1];
+            bases = target && !/^[~-]|[$"'`]/.test(target) ? [...new Set(bases.map((b) => resolve(b, target)))] : [];
+            continue;
+          }
+          const cmd = part.match(SCRIPT_COMMAND);
+          if (!cmd || bases.length === 0) continue;
+          checked++;
+          const script = cmd[1];
+          if (!bases.some((base) => existsSync(resolve(base, script)))) {
+            broken.push(`${where}  command script ${script} (not found from ${bases.map(describeBase).join(" or ")})`);
+          }
         }
         return;
       }
@@ -136,6 +176,11 @@ function checkFile(relPath) {
       for (const target of targets) {
         if (isExternal(target)) continue;
         const path = stripSuffix(target);
+        if (path === null) {
+          checked++;
+          broken.push(`${where}  link ${target} (malformed percent-encoding; write a literal % as %25)`);
+          continue;
+        }
         if (!path) continue;
         checked++;
         const resolved = path.startsWith("/") ? join(ROOT, path) : resolve(dir, path);
