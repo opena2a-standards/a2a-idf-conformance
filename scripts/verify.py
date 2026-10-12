@@ -987,7 +987,9 @@ def _json_text(v: Any) -> str:
         if vtype == "number" or abs(v) > _MAX_SAFE_INTEGER:
             return f"a JSON {vtype}"
         return str(int(v))  # 1.0 as 1 and -0.0 as 0, as JSON.stringify writes them
-    return json.dumps(v, ensure_ascii=False, separators=(",", ":"))
+    text = json.dumps(v, ensure_ascii=False, separators=(",", ":"))
+    # A lone surrogate as a lowercase \uXXXX escape, as JSON.stringify writes it.
+    return _SURROGATE.sub(lambda m: f"\\u{ord(m.group()):04x}", text)
 
 
 def _field_path(path: str, key: str) -> str:
@@ -1238,9 +1240,10 @@ def main() -> int:
 
 
 def _print(line: str) -> None:
-    """Print a line that can quote a fixture string holding a lone surrogate,
-    which UTF-8 cannot encode. It is written as U+FFFD, as console.log in
-    verify.mjs writes it."""
+    """Print a line that can quote a fixture string as it is, holding a lone
+    surrogate, which UTF-8 cannot encode. It is written as U+FFFD, as
+    console.log in verify.mjs writes it. A schema reason quotes a string as
+    JSON text, where _json_text has already escaped a lone surrogate."""
     print(_SURROGATE.sub("�", line))
 
 

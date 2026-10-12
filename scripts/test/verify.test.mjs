@@ -335,6 +335,41 @@ test("a schema reason words a number the same way in both verifiers", (t) => {
   assert.deepEqual(blocks.python, blocks.node);
 });
 
+// A schema reason quotes a string as JSON text, where JSON.stringify writes a
+// lone surrogate, which UTF-8 cannot encode, as a lowercase \uXXXX escape.
+// verify.py wrote it as U+FFFD, as both verifiers print a string that a reason
+// quotes as it is.
+test("a schema reason writes a lone surrogate the same way in both verifiers", (t) => {
+  const variants = {};
+  const expected = {};
+  for (const [name, mutate, literal, reason] of [
+    [
+      "enum",
+      (fx) => (fx.expected.verifyResult = PLACEHOLDER),
+      '"X\\ud800"',
+      'expected.verifyResult: "X\\ud800" is not one of "ACCEPT", "REJECT"',
+    ],
+    [
+      "enum-low-surrogate-and-pair",
+      (fx) => (fx.expected.verifyResult = PLACEHOLDER),
+      '"\\uDC00\\ud83d\\ude00"',
+      'expected.verifyResult: "\\udc00\u{1F600}" is not one of "ACCEPT", "REJECT"',
+    ],
+    [
+      "const",
+      (fx) => (fx.$schema = PLACEHOLDER),
+      '"X\\ud800"',
+      '$schema: expected "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json", got "X\\ud800"',
+    ],
+  ]) {
+    variants[`${name}.json`] = literalVariant("fixtures/levels/level-0-self-asserted.json", mutate, literal);
+    expected[`${name}.json`] = ["FAIL", "stage:  schema", `reason: ${reason}`];
+  }
+  const blocks = runOverVariants(t, variants);
+  assert.deepEqual(blocks.node, expected);
+  assert.deepEqual(blocks.python, blocks.node);
+});
+
 // A JSON number does not record how it was written, so `created` enters the
 // signature base as JavaScript writes the number: 1714000000.0 as 1714000000,
 // as verify.mjs wrote it and verify.py did not. A copy whose `created` is
