@@ -485,6 +485,126 @@ test("a publicKeyPem that is not an Ed25519 SPKI PEM fails the same way in both 
   assert.deepEqual(blocks.python, blocks.node);
 });
 
+// A publicKeyMultibase character outside the base58btc alphabet is named in
+// the reason as it is, like any string a reason quotes. verify.py wrote it as
+// a Python literal: '0' for 0, "'" for an apostrophe, '\\' for a backslash and
+// '\ud800' for a lone surrogate, which verify.mjs prints as U+FFFD.
+test("an invalid base58 character is worded the same way in both verifiers", (t) => {
+  const variants = {};
+  const expected = {};
+  for (const [name, literal, character] of [
+    ["zero", '"z0"', "0"],
+    ["after-valid-characters", '"z6Mkl"', "l"],
+    ["apostrophe", `"z'"`, "'"],
+    ["backslash", '"z\\\\"', "\\"],
+    ["non-ascii", '"zé"', "é"],
+    ["surrogate-pair", '"z\\ud83d\\ude00"', "\u{1F600}"],
+    ["lone-surrogate", '"z\\ud800"', "\u{FFFD}"],
+  ]) {
+    variants[`${name}.json`] = literalVariant(
+      "fixtures/composition/aim-did-rfc9421/bilateral-receipt.json",
+      (fx) => (fx.keyidResolution.document.verificationMethod[0].publicKeyMultibase = PLACEHOLDER),
+      literal,
+    );
+    expected[`${name}.json`] = [
+      "FAIL",
+      "stage:  public-key-extraction",
+      `reason: invalid base58 character: ${character}`,
+    ];
+  }
+  const blocks = runOverVariants(t, variants);
+  assert.deepEqual(blocks.node, expected);
+  assert.deepEqual(blocks.python, blocks.node);
+});
+
+const COMPACT_FIXTURE = "fixtures/composition/hippo-rfc9421/signature-alone-no-tag.json";
+const NOT_AN_ED25519_PEM = [
+  "FAIL",
+  "stage:  public-key-extraction",
+  "reason: compact-form publicKeyPem is not an Ed25519 SPKI PEM",
+];
+
+// The BEGIN line, the one base64 line and the END line of the fixture's key.
+function compactPemLines() {
+  const pem = JSON.parse(readFileSync(join(REPO, COMPACT_FIXTURE), "utf8")).keyidResolution.publicKeyPem;
+  const lines = pem.split("\n");
+  assert.equal(lines.length, 4);
+  assert.equal(lines[3], "");
+  return lines.slice(0, 3);
+}
+
+// Text outside the armor of a compact-form publicKeyPem is not part of the
+// key. The crypto library verify.mjs calls skips the lines before the BEGIN
+// line and reads nothing after the END line. verify.py deleted the two armor
+// lines wherever they stood and decoded all the text that was left, so a
+// character outside ASCII after the END line failed the key in verify.py alone
+// (the base64 module takes ASCII text only) where ASCII text there did not,
+// text before the BEGIN line was decoded as part of the key, and armor that
+// verify.mjs does not read (no END line, text on the END line, no line breaks)
+// still gave verify.py a key. verify.py now reads the lines as that library
+// does: a line ends at a line feed or after 254 bytes, a byte order mark before
+// the first line is skipped, and a line of the body ends at a NUL.
+test("text outside the armor of a publicKeyPem is not part of the key in either verifier", (t) => {
+  const [begin, body, end] = compactPemLines();
+  const pem = `${begin}\n${body}\n${end}\n`;
+  const note = (line) => line.replace("PUBLIC KEY", "NOTE");
+  const accepted = {
+    "non-ascii-after-the-end-line": `${pem}\xe9`,
+    "non-ascii-lines-after-the-end-line": `${pem}cl\xe9 publique\n\n`,
+    "lone-surrogate-after-the-end-line": `${pem}\udc00`,
+    "ascii-after-the-end-line": `${pem}abc`,
+    "unreadable-block-after-the-end-line": `${pem}${begin}\nnot base64 \xe9\n${end}\n`,
+    "non-ascii-before-the-begin-line": `\xe9\n${pem}`,
+    "ascii-before-the-begin-line": `abc\n${pem}`,
+    "end-line-before-the-begin-line": `${end}\n${pem}`,
+    "byte-order-mark": `${String.fromCharCode(0xfeff)}${pem}`,
+    "begin-line-after-254-bytes": `${" ".repeat(254)}${pem}`,
+    "text-after-a-nul-in-a-body-line": `${begin}\n${body.slice(0, 20)}\u0000x\n${body.slice(20)}\n${end}\n`,
+  };
+  const refused = {
+    "begin-line-after-253-bytes": `${" ".repeat(253)}${pem}`,
+    "text-on-the-end-line": `${begin}\n${body}\n${end} abc\n`,
+    "end-line-of-another-label": `${begin}\n${body}\n${note(end)}\n${end}\n`,
+    "block-of-another-label-left-open": `${note(begin)}\n${pem}`,
+    "no-end-line": `${begin}\n${body}\n`,
+    "no-begin-line": `${body}\n${end}\n`,
+    "no-line-breaks": `${begin}${body}${end}`,
+    "non-ascii-in-the-body": `${begin}\n${body.slice(0, 20)}\xe9${body.slice(20)}\n${end}\n`,
+  };
+  const variants = {};
+  const expected = {};
+  for (const [outcome, group] of [
+    [["PASS", "observed: ACCEPT"], accepted],
+    [NOT_AN_ED25519_PEM, refused],
+  ]) {
+    for (const [name, text] of Object.entries(group)) {
+      variants[`${name}.json`] = literalVariant(COMPACT_FIXTURE, (fx) => (fx.keyidResolution.publicKeyPem = text));
+      expected[`${name}.json`] = outcome;
+    }
+  }
+  const blocks = runOverVariants(t, variants);
+  assert.deepEqual(blocks.node, expected);
+  assert.deepEqual(blocks.python, blocks.node);
+});
+
+// A line that would open a block of another label but for a byte above 0x7f at
+// its end. Where measured (Node 26 on macOS arm64) the crypto library
+// verify.mjs calls drops that byte, reads the line as a BEGIN line and does not
+// reach the key below it. verify.py does not depend on how that byte is read:
+// it refuses the key.
+test("verify.py refuses a key below a BEGIN line of another label that ends in a non-ASCII byte", (t) => {
+  const [begin, body, end] = compactPemLines();
+  const path = writeVariant(t, COMPACT_FIXTURE, (fx) => {
+    fx.keyidResolution.publicKeyPem = `${begin.replace("PUBLIC KEY", "NOTE")}\xe9\n${begin}\n${body}\n${end}\n`;
+  });
+  const result = runVerifier(VERIFIERS.python, path);
+  assert.equal(result.stderr, "");
+  assert.deepEqual(
+    result.stdout.split("\n").slice(1, 3).map((line) => line.trim()),
+    NOT_AN_ED25519_PEM.slice(1),
+  );
+});
+
 // Reject reasons of level fixtures that the two verifiers worded differently:
 // a field the DNS TXT record does not carry (undefined and None), identity
 // params that are a JSON array (verify.mjs took an array as params), a Level 2
