@@ -356,6 +356,12 @@ test("a schema reason writes a lone surrogate the same way in both verifiers", (
       'expected.verifyResult: "\\udc00\u{1F600}" is not one of "ACCEPT", "REJECT"',
     ],
     [
+      "enum-two-lone-surrogates",
+      (fx) => (fx.expected.verifyResult = PLACEHOLDER),
+      '"\\ud800\\ud800"',
+      'expected.verifyResult: "\\ud800\\ud800" is not one of "ACCEPT", "REJECT"',
+    ],
+    [
       "const",
       (fx) => (fx.$schema = PLACEHOLDER),
       '"X\\ud800"',
