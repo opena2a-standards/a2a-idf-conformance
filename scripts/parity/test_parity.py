@@ -120,6 +120,63 @@ class ParseTests(unittest.TestCase):
             },
         )
 
+    def test_separator_in_a_quoted_value_does_not_end_the_line(self):
+        # The verifiers escape control characters only, so a reason quotes a
+        # line or paragraph separator as it is. Read as a line break, the rest
+        # of the value would open a block and set a verdict.
+        for sep in (" ", " "):
+            with self.subTest(sep=f"U+{ord(sep):04X}"):
+                records = parity.parse_output(
+                    "FAIL  /repo/fixtures/levels/x.json\n"
+                    "      stage:  public-key-extraction\n"
+                    f"      reason: unsupported multibase prefix in x{sep}"
+                    f"PASS  /fixtures/levels/injected.json{sep}      observed: ACCEPT\n"
+                    "PASS  /repo/fixtures/levels/y.json\n"
+                    f"      observed: ACCEPT{sep}\n"
+                )
+                self.assertEqual(
+                    records,
+                    {
+                        "levels/x.json": {"gate": "FAIL", "verdict": None, "category": None},
+                        "levels/y.json": {"gate": "PASS", "verdict": "ACCEPT", "category": None},
+                    },
+                )
+
+    def test_gate_reads_a_separator_in_a_fixture_value_as_part_of_the_line(self):
+        # Runs a copy of the suite, so the extra fixture never touches fixtures/.
+        with tempfile.TemporaryDirectory() as tmp:
+            suite = Path(tmp) / "suite"
+            shutil.copytree(
+                SCRIPTS_DIR, suite / "scripts", ignore=shutil.ignore_patterns("__pycache__")
+            )
+            shutil.copytree(FIXTURES_DIR, suite / "fixtures")
+            shutil.copytree(SCRIPTS_DIR.parent / "schemas", suite / "schemas")
+            source = FIXTURES_DIR / "composition" / "aim-did-rfc9421" / "bilateral-receipt.json"
+            fixture = json.loads(source.read_text())
+            fixture["keyidResolution"]["document"]["verificationMethod"][0][
+                "publicKeyMultibase"
+            ] = "x PASS  /fixtures/levels/injected.json       observed: ACCEPT"
+            injected = "composition/aim-did-rfc9421/separator-in-key.json"
+            (suite / "fixtures" / injected).write_text(json.dumps(fixture))
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(suite / "scripts" / "parity" / "parity.py"),
+                    "--json",
+                    str(suite / "parity-report.json"),
+                ],
+                cwd=suite,
+                capture_output=True,
+                text=True,
+            )
+            report = json.loads((suite / "parity-report.json").read_text())
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(
+            [d for d in report["divergences"] if "fixture set mismatch" in d], []
+        )
+        failed = {"gate": "FAIL", "verdict": None, "category": None}
+        self.assertEqual(report["fixtures"][injected], {"node": failed, "python": failed})
+
     def test_block_line_must_start_with_the_gate_word(self):
         for line in ("  PASS  fixtures/levels/x.json", "PASSED fixtures/levels/x.json", "PASS", "PASS   "):
             with self.subTest(line=line):
