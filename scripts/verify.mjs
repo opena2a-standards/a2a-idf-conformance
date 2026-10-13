@@ -890,9 +890,13 @@ function collectFixtures(arg) {
 // Prints a line that can quote a fixture string as it is. A C0 or C1 control
 // character (U+0000 to U+001F, U+007F to U+009F) is written as a lowercase
 // \uXXXX escape, as in verify.py, so a fixture cannot break the line or send the
-// terminal a command.
-function report(line) {
-  console.log(line.replace(/[\u0000-\u001f\u007f-\u009f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`));
+// terminal a command. So is a backslash followed by "u" (\), so a \u in the
+// line always begins an escape: a value of the six characters \u001b is not
+// printed as U+001B is. A line of JSON text (jsonText true) keeps its
+// backslashes, which JSON text writes as \\ already.
+function report(line, jsonText = false) {
+  const pattern = jsonText ? /[\u0000-\u001f\u007f-\u009f]/g : /[\u0000-\u001f\u007f-\u009f]|\\(?=u)/g;
+  console.log(line.replace(pattern, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`));
 }
 
 function main() {
@@ -921,10 +925,11 @@ function main() {
       }
       if (!result.ok) {
         report(`      stage:  ${result.stage}`);
-        report(`      reason: ${result.reason}`);
+        // A schema reason quotes a string as JSON text.
+        report(`      reason: ${result.reason}`, result.stage === "schema");
         if (result.reconstructed !== undefined) {
-          report(`      reconstructed: ${JSON.stringify(result.reconstructed)}`);
-          report(`      expected:      ${JSON.stringify(result.expected)}`);
+          report(`      reconstructed: ${JSON.stringify(result.reconstructed)}`, true);
+          report(`      expected:      ${JSON.stringify(result.expected)}`, true);
         }
       }
     } catch (err) {

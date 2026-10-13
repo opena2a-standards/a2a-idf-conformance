@@ -750,6 +750,46 @@ test("a control character in a quoted value is written as an escape by both veri
   assert.deepEqual(blocks.python, blocks.node);
 });
 
+// The escape written for a control character was not itself escaped, so a
+// quoted value of the six characters \u001b printed the same line as one of
+// U+001B. Both verifiers write a backslash followed by "u" in a printed line as
+// \, and only that backslash; a schema reason quotes a string as JSON
+// text, which writes a backslash as \\ already, and keeps its backslashes.
+test("a backslash before u in a quoted value is escaped by both verifiers", (t) => {
+  const DID_FIXTURE = "fixtures/composition/aim-did-rfc9421/bilateral-receipt.json";
+  const variants = {};
+  const expected = {};
+  for (const [name, value, reason] of [
+    ["control-character", "x\u001b", "unsupported multibase prefix in x\\u001b"],
+    ["backslash-u", "x\\u001b", "unsupported multibase prefix in x\\u005cu001b"],
+    ["two-backslashes-u", "x\\\\u", "unsupported multibase prefix in x\\\\u005cu"],
+    ["backslash-n", "x\\n", "unsupported multibase prefix in x\\n"],
+  ]) {
+    variants[`${name}.json`] = literalVariant(
+      DID_FIXTURE,
+      (fx) => (fx.keyidResolution.document.verificationMethod[0].publicKeyMultibase = value),
+    );
+    expected[`${name}.json`] = ["FAIL", "stage:  public-key-extraction", `reason: ${reason}`];
+  }
+  for (const [name, value, text] of [
+    ["schema-reason-control-character", "X\u001b", '"X\\u001b"'],
+    ["schema-reason-backslash-u", "X\\u001b", '"X\\\\u001b"'],
+  ]) {
+    variants[`${name}.json`] = literalVariant(
+      "fixtures/levels/level-0-self-asserted.json",
+      (fx) => (fx.expected.verifyResult = value),
+    );
+    expected[`${name}.json`] = [
+      "FAIL",
+      "stage:  schema",
+      `reason: expected.verifyResult: ${text} is not one of "ACCEPT", "REJECT"`,
+    ];
+  }
+  const blocks = runOverVariants(t, variants);
+  assert.deepEqual(blocks.node, expected);
+  assert.deepEqual(blocks.python, blocks.node);
+});
+
 // Reject reasons of level fixtures that the two verifiers worded differently:
 // a field the DNS TXT record does not carry (undefined and None), identity
 // params that are a JSON array (verify.mjs took an array as params), a Level 2
