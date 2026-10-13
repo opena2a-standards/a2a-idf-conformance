@@ -97,20 +97,97 @@ function rawEd25519ToSpkiPem(raw) {
   return `-----BEGIN PUBLIC KEY-----\n${b64}\n-----END PUBLIC KEY-----\n`;
 }
 
-// A PEM the crypto library cannot read, or one that holds a key of another type
-// (RSA, EC), is reported in one wording, as verify.py words it: the library's
-// own message (error:1E08010C:DECODER routines::unsupported) comes from OpenSSL.
-function ed25519KeyFromPem(pem) {
-  let key = null;
-  try {
-    key = createPublicKey({ key: pem, format: "pem" });
-  } catch {
-    // Reported below.
+const PEM_BEGIN = "-----BEGIN PUBLIC KEY-----";
+const PEM_END = "-----END PUBLIC KEY-----";
+// Both verifiers read a compact-form PEM themselves, by the same rules, and
+// hand the crypto library only the key bytes: given the PEM text, that library
+// reads past a block of another label, takes a private key, ignores bytes
+// after the key, decodes base64 leniently, reads bytes above 0x7f differently
+// from one platform to another, and asks for a pass phrase on the terminal when
+// the block carries an encryption header. The rules for lines are those of the
+// PEM reader in OpenSSL: a line is at most 254 bytes, and the bytes at the end
+// of a line that are a space or below it are dropped. A line that would be a
+// BEGIN line but for bytes above 0x7f at its end is a BEGIN line of another
+// label here.
+const PEM_LINE_BYTES = 254;
+const UTF8_BOM = "\xef\xbb\xbf";
+const isPemTrailing = (byte) => byte <= 0x20;
+const isPemTrailingOrNonAscii = (byte) => byte <= 0x20 || byte >= 0x80;
+
+function stripEnd(line, isTrailing) {
+  let end = line.length;
+  while (end > 0 && isTrailing(line.charCodeAt(end - 1))) end--;
+  return line.slice(0, end);
+}
+
+// The lines of a PEM, each as a binary string (one character a byte): a line
+// ends at a line feed, or after 254 bytes when no line feed comes sooner, and a
+// UTF-8 byte order mark at the start of the text is skipped. A lone surrogate
+// is encoded as U+FFFD, three bytes.
+function pemLines(pem) {
+  const data = Buffer.from(pem, "utf8");
+  const lines = [];
+  let start = 0;
+  while (start < data.length) {
+    const feed = data.subarray(start, start + PEM_LINE_BYTES).indexOf(0x0a);
+    const end = feed < 0 ? start + PEM_LINE_BYTES : start + feed + 1;
+    const line = data.subarray(start, end).toString("latin1");
+    lines.push(start === 0 && line.startsWith(UTF8_BOM) ? line.slice(UTF8_BOM.length) : line);
+    start = end;
   }
-  if (key?.asymmetricKeyType !== "ed25519") {
+  return lines;
+}
+
+// The base64 text between the BEGIN PUBLIC KEY line and the END PUBLIC KEY line
+// that follows it, as verify.py reads it, or null. The text outside those two
+// lines is not part of the key: lines before the BEGIN line are skipped and
+// nothing after the END line is read, whatever characters they hold. null when
+// the first PEM block is not a PUBLIC KEY block that ends in its END line, or
+// when an empty line follows a line of base64 text.
+function pemBody(pem) {
+  const lines = pemLines(pem);
+  let i = 0;
+  for (; i < lines.length; i++) {
+    const begin = stripEnd(lines[i], isPemTrailingOrNonAscii);
+    if (begin.startsWith("-----BEGIN ") && begin.endsWith("-----")) break;
+  }
+  // The first block is the one read, whatever its label: a block of another
+  // label before the key, a private key among them, is never read past.
+  if (i === lines.length || stripEnd(lines[i], isPemTrailing) !== PEM_BEGIN) return null;
+  const body = [];
+  for (i++; i < lines.length; i++) {
+    let line = stripEnd(lines[i], isPemTrailing);
+    if (line.startsWith("-----END ")) return line === PEM_END ? body.join("") : null;
+    // A line of the body ends at its first NUL, as OpenSSL reads it.
+    line = line.split("\0", 1)[0];
+    if (line === "") {
+      // Empty lines may come before the base64 text (RFC 7468 Figure 1), never
+      // within or after it.
+      if (body.length > 0) return null;
+      continue;
+    }
+    body.push(line);
+  }
+  return null;
+}
+
+// A PEM that cannot be read, or one that holds a key of another type (RSA, EC),
+// is reported in one wording, as verify.py words it. The body must be the
+// base64 text of the key bytes character for character: Buffer skips a
+// character outside the base64 alphabet and reads the URL-safe alphabet too, so
+// the key bytes are encoded again and compared with the body.
+function ed25519KeyFromPem(pem) {
+  const text = pemBody(pem);
+  const der = Buffer.from(text ?? "", "base64");
+  if (
+    text === null ||
+    der.toString("base64") !== text ||
+    der.length !== ED25519_SPKI_PREFIX.length + 32 ||
+    !der.subarray(0, ED25519_SPKI_PREFIX.length).equals(ED25519_SPKI_PREFIX)
+  ) {
     throw new Error("compact-form publicKeyPem is not an Ed25519 SPKI PEM");
   }
-  return key;
+  return createPublicKey({ key: der, format: "der", type: "spki" });
 }
 
 function extractPublicKeyFromKeyidResolution(kr) {
@@ -810,6 +887,14 @@ function collectFixtures(arg) {
   return out;
 }
 
+// Prints a line that can quote a fixture string as it is. A C0 or C1 control
+// character (U+0000 to U+001F, U+007F to U+009F) is written as a lowercase
+// \uXXXX escape, as in verify.py, so a fixture cannot break the line or send the
+// terminal a command.
+function report(line) {
+  console.log(line.replace(/[\u0000-\u001f\u007f-\u009f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`));
+}
+
 function main() {
   const args = process.argv.slice(2);
   if (args.length === 0) {
@@ -826,32 +911,33 @@ function main() {
       const result = verifyFixture(abs);
       if (result.ok) {
         passCount++;
-        console.log(`PASS  ${abs}`);
+        report(`PASS  ${abs}`);
       } else {
         failCount++;
-        console.log(`FAIL  ${abs}`);
+        report(`FAIL  ${abs}`);
       }
       if (result.observed !== undefined) {
-        console.log(`      observed: ${result.observed}`);
+        report(`      observed: ${result.observed}`);
       }
       if (!result.ok) {
-        console.log(`      stage:  ${result.stage}`);
-        console.log(`      reason: ${result.reason}`);
+        report(`      stage:  ${result.stage}`);
+        report(`      reason: ${result.reason}`);
         if (result.reconstructed !== undefined) {
-          console.log(`      reconstructed: ${JSON.stringify(result.reconstructed)}`);
-          console.log(`      expected:      ${JSON.stringify(result.expected)}`);
+          report(`      reconstructed: ${JSON.stringify(result.reconstructed)}`);
+          report(`      expected:      ${JSON.stringify(result.expected)}`);
         }
       }
     } catch (err) {
       failCount++;
-      console.log(`ERROR ${abs}`);
+      report(`ERROR ${abs}`);
       // A failed system call (ENOENT, ENOTDIR, EACCES, ELOOP) and an entry the
       // walk does not read are problems with the input, and their message names
-      // the path; a stack trace is kept for a verifier fault. collectFixtures
-      // walks directories, so no directory is read as a file (EISDIR, whose
-      // message names no path).
+      // the path; a stack trace is kept for a verifier fault, one line of it at
+      // a time. collectFixtures walks directories, so no directory is read as a
+      // file (EISDIR, whose message names no path).
       const inputError = err.syscall !== undefined || err === listingError;
-      console.log(`      ${inputError ? err.message : (err.stack ?? err.message)}`);
+      if (inputError) report(`      ${err.message}`);
+      else for (const line of `      ${err.stack ?? err.message}`.split("\n")) report(line);
     }
   }
   console.log(`summary: ${passCount} pass, ${failCount} fail (${paths.length} fixtures)`);

@@ -166,11 +166,13 @@ def _pick_assertion_method_id(doc: dict[str, Any]) -> str | None:
 
 PEM_BEGIN = b"-----BEGIN PUBLIC KEY-----"
 PEM_END = b"-----END PUBLIC KEY-----"
-# The crypto library verify.mjs calls reads a PEM in lines of at most 254 bytes
-# and drops the bytes at the end of a line that are a space or below it. On the
-# build measured (OpenSSL 3.6 in Node 26 on macOS arm64) it drops the bytes
-# above 0x7f there too. verify.py does not depend on that: it drops none of
-# them, and refuses a line that would be a BEGIN line without them.
+# Both verifiers read a compact-form PEM themselves, by the same rules, and
+# hand the crypto library only the key bytes. The rules for lines are those of
+# the PEM reader in OpenSSL: a line is at most 254 bytes, and the bytes at the
+# end of a line that are a space or below it are dropped. Where that reader
+# also drops the bytes above 0x7f there (OpenSSL 3.6 in Node 26 on macOS
+# arm64), these rules drop none of them, and refuse a line that would be a
+# BEGIN line without them.
 PEM_LINE_BYTES = 254
 PEM_TRAILING = bytes(range(0x21))
 PEM_TRAILING_OR_NON_ASCII = PEM_TRAILING + bytes(range(0x80, 0x100))
@@ -178,10 +180,11 @@ UTF8_BOM = b"\xef\xbb\xbf"
 
 
 def _pem_lines(pem: str) -> Iterator[bytes]:
-    """The lines of a PEM as verify.mjs reads them: a line ends at a line feed,
-    or after 254 bytes when no line feed comes sooner, and a UTF-8 byte order
-    mark at the start of the text is skipped."""
-    # A lone surrogate is three bytes here, as the U+FFFD verify.mjs reads is.
+    """The lines of a PEM: a line ends at a line feed, or after 254 bytes when
+    no line feed comes sooner, and a UTF-8 byte order mark at the start of the
+    text is skipped."""
+    # A lone surrogate is three bytes here, as in verify.mjs, which encodes it
+    # as U+FFFD.
     data = pem.encode("utf-8", "surrogatepass")
     start = 0
     while start < len(data):
@@ -194,16 +197,19 @@ def _pem_lines(pem: str) -> Iterator[bytes]:
 
 def _pem_body(pem: str) -> str:
     """The base64 text between the BEGIN PUBLIC KEY line and the END PUBLIC KEY
-    line that follows it. The text outside those two lines is not part of the
-    key, as in verify.mjs: lines before the BEGIN line are skipped and nothing
-    after the END line is read, whatever characters they hold. Raises
+    line that follows it, as verify.mjs reads it. The text outside those two
+    lines is not part of the key: lines before the BEGIN line are skipped and
+    nothing after the END line is read, whatever characters they hold. Raises
     ValueError when the first PEM block is not a PUBLIC KEY block that ends in
-    its END line, or when the text between the two lines is not ASCII."""
+    its END line, when an empty line follows a line of base64 text, or when
+    the text between the two lines is not ASCII."""
     lines = _pem_lines(pem)
     for line in lines:
         begin = line.rstrip(PEM_TRAILING_OR_NON_ASCII)
         if begin.startswith(b"-----BEGIN ") and begin.endswith(b"-----"):
-            # The first block is the one read, whatever its label.
+            # The first block is the one read, whatever its label: a block of
+            # another label before the key, a private key among them, is
+            # never read past.
             if line.rstrip(PEM_TRAILING) != PEM_BEGIN:
                 raise ValueError("the first PEM block is not a PUBLIC KEY block")
             break
@@ -216,17 +222,30 @@ def _pem_body(pem: str) -> str:
             if line != PEM_END:
                 raise ValueError("the END line does not match the BEGIN line")
             return b"".join(body).decode("ascii")
-        # That library reads a line of the body up to its first NUL.
-        body.append(line.partition(b"\0")[0])
+        # A line of the body ends at its first NUL, as OpenSSL reads it.
+        line = line.partition(b"\0")[0]
+        if not line:
+            # Empty lines may come before the base64 text (RFC 7468 Figure 1),
+            # never within or after it.
+            if body:
+                raise ValueError("an empty line after base64 text")
+            continue
+        body.append(line)
     raise ValueError("no END line")
 
 
 def _pem_spki_to_ed25519(pem: str) -> Ed25519PublicKey:
     """A PEM whose armor or body cannot be read is reported in the same words
     as one that holds another key type, as verify.mjs words them all (the
-    base64 module's own message is "Incorrect padding")."""
+    base64 module's own message is "Incorrect padding"). The body must be the
+    base64 text of the key bytes character for character: the base64 module
+    skips a character outside the base64 alphabet and stops at padding, so the
+    key bytes are encoded again and compared with the body."""
     try:
-        der = base64.b64decode(_pem_body(pem))
+        text = _pem_body(pem)
+        der = base64.b64decode(text)
+        if base64.b64encode(der).decode("ascii") != text:
+            der = b""
     except ValueError:
         der = b""
     prefix = bytes.fromhex("302a300506032b6570032100")
@@ -1292,11 +1311,18 @@ def main() -> int:
     return 0 if fail_count == 0 else 1
 
 
+_CONTROL = re.compile("[\x00-\x1f\x7f-\x9f]")
+
+
 def _print(line: str) -> None:
-    """Print a line that can quote a fixture string as it is, holding a lone
-    surrogate, which UTF-8 cannot encode. It is written as U+FFFD, as
-    console.log in verify.mjs writes it. A schema reason quotes a string as
-    JSON text, where _json_text has already escaped a lone surrogate."""
+    """Print a line that can quote a fixture string as it is. A C0 or C1
+    control character (U+0000 to U+001F, U+007F to U+009F) is written as a
+    lowercase \\uXXXX escape, as in verify.mjs, so a fixture cannot break the
+    line or send the terminal a command. A lone surrogate, which UTF-8 cannot
+    encode, is written as U+FFFD, as console.log in verify.mjs writes it. A
+    schema reason quotes a string as JSON text, where _json_text has already
+    escaped a lone surrogate and a C0 control character."""
+    line = _CONTROL.sub(lambda m: f"\\u{ord(m.group()):04x}", line)
     print(_SURROGATE.sub("�", line))
 
 
