@@ -610,8 +610,8 @@ test("verify.py refuses a key below a BEGIN line of another label that ends in a
 // params that are a JSON array (verify.mjs took an array as params), a Level 2
 // signature that is not 64 bytes (verify.py had a reason of its own), and a
 // quoted string holding a lone surrogate, which UTF-8 cannot encode (U+FFFD
-// from verify.mjs, \ud800 from verify.py). The variants pin ACCEPT, so the
-// reason is printed.
+// from verify.mjs, \ud800 from verify.py), each of them when it holds two. The
+// variants pin ACCEPT, so the reason is printed.
 test("level reject reasons are worded the same way in both verifiers", (t) => {
   const LEVEL_1 = "fixtures/levels/level-1-domain-verified.json";
   const LEVEL_2 = "fixtures/levels/level-2-organization-verified.json";
@@ -664,6 +664,14 @@ test("level reject reasons are worded the same way in both verifiers", (t) => {
       "SHAPE_INVALID",
       "unknown identityLevel: X�",
       '"X\\ud800"',
+    ],
+    [
+      "two-lone-surrogates",
+      LEVEL_1,
+      (fx) => (identityParams(fx).identityLevel = PLACEHOLDER),
+      "SHAPE_INVALID",
+      "unknown identityLevel: ��",
+      '"\\ud800\\ud800"',
     ],
   ]) {
     variants[`${name}.json`] = literalVariant(
