@@ -610,8 +610,10 @@ test("verify.py refuses a key below a BEGIN line of another label that ends in a
 // params that are a JSON array (verify.mjs took an array as params), a Level 2
 // signature that is not 64 bytes (verify.py had a reason of its own), and a
 // quoted string holding a lone surrogate, which UTF-8 cannot encode (U+FFFD
-// from verify.mjs, \ud800 from verify.py), each of them when it holds two. The
-// variants pin ACCEPT, so the reason is printed.
+// from verify.mjs, \ud800 from verify.py), each of them when it holds two. A
+// provider URL holding two lone surrogates names an opaque host in which the
+// URL parser read each of them as U+FFFD and percent-encoded it. The variants
+// pin ACCEPT, so the reason is printed.
 test("level reject reasons are worded the same way in both verifiers", (t) => {
   const LEVEL_1 = "fixtures/levels/level-1-domain-verified.json";
   const LEVEL_2 = "fixtures/levels/level-2-organization-verified.json";
@@ -672,6 +674,14 @@ test("level reject reasons are worded the same way in both verifiers", (t) => {
       "SHAPE_INVALID",
       "unknown identityLevel: ��",
       '"\\ud800\\ud800"',
+    ],
+    [
+      "provider-url-two-lone-surrogates",
+      LEVEL_1,
+      (fx) => (fx.agentCard.provider.url = PLACEHOLDER),
+      "DOMAIN_MISMATCH",
+      "attestation domain example.com != provider domain ex%EF%BF%BD%EF%BF%BDample.com",
+      '"foo://ex\\ud800\\ud800ample.com/"',
     ],
   ]) {
     variants[`${name}.json`] = literalVariant(
