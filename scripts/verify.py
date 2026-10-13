@@ -33,6 +33,7 @@ import re
 import stat
 import sys
 import unicodedata
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
@@ -163,19 +164,69 @@ def _pick_assertion_method_id(doc: dict[str, Any]) -> str | None:
     return None
 
 
+PEM_BEGIN = b"-----BEGIN PUBLIC KEY-----"
+PEM_END = b"-----END PUBLIC KEY-----"
+# The crypto library verify.mjs calls reads a PEM in lines of at most 254 bytes
+# and drops the bytes at the end of a line that are a space or below it. On the
+# build measured (OpenSSL 3.6 in Node 26 on macOS arm64) it drops the bytes
+# above 0x7f there too. verify.py does not depend on that: it drops none of
+# them, and refuses a line that would be a BEGIN line without them.
+PEM_LINE_BYTES = 254
+PEM_TRAILING = bytes(range(0x21))
+PEM_TRAILING_OR_NON_ASCII = PEM_TRAILING + bytes(range(0x80, 0x100))
+UTF8_BOM = b"\xef\xbb\xbf"
+
+
+def _pem_lines(pem: str) -> Iterator[bytes]:
+    """The lines of a PEM as verify.mjs reads them: a line ends at a line feed,
+    or after 254 bytes when no line feed comes sooner, and a UTF-8 byte order
+    mark at the start of the text is skipped."""
+    # A lone surrogate is three bytes here, as the U+FFFD verify.mjs reads is.
+    data = pem.encode("utf-8", "surrogatepass")
+    start = 0
+    while start < len(data):
+        feed = data.find(b"\n", start, start + PEM_LINE_BYTES)
+        end = start + PEM_LINE_BYTES if feed < 0 else feed + 1
+        line = data[start:end]
+        yield line[len(UTF8_BOM) :] if start == 0 and line.startswith(UTF8_BOM) else line
+        start = end
+
+
+def _pem_body(pem: str) -> str:
+    """The base64 text between the BEGIN PUBLIC KEY line and the END PUBLIC KEY
+    line that follows it. The text outside those two lines is not part of the
+    key, as in verify.mjs: lines before the BEGIN line are skipped and nothing
+    after the END line is read, whatever characters they hold. Raises
+    ValueError when the first PEM block is not a PUBLIC KEY block that ends in
+    its END line, or when the text between the two lines is not ASCII."""
+    lines = _pem_lines(pem)
+    for line in lines:
+        begin = line.rstrip(PEM_TRAILING_OR_NON_ASCII)
+        if begin.startswith(b"-----BEGIN ") and begin.endswith(b"-----"):
+            # The first block is the one read, whatever its label.
+            if line.rstrip(PEM_TRAILING) != PEM_BEGIN:
+                raise ValueError("the first PEM block is not a PUBLIC KEY block")
+            break
+    else:
+        raise ValueError("no BEGIN line")
+    body = []
+    for line in lines:
+        line = line.rstrip(PEM_TRAILING)
+        if line.startswith(b"-----END "):
+            if line != PEM_END:
+                raise ValueError("the END line does not match the BEGIN line")
+            return b"".join(body).decode("ascii")
+        # That library reads a line of the body up to its first NUL.
+        body.append(line.partition(b"\0")[0])
+    raise ValueError("no END line")
+
+
 def _pem_spki_to_ed25519(pem: str) -> Ed25519PublicKey:
-    """A PEM whose body is not base64 is reported in the same words as one that
-    holds another key type, as verify.mjs words both (the base64 module's own
-    message is "Incorrect padding")."""
-    body = (
-        pem.replace("-----BEGIN PUBLIC KEY-----", "")
-        .replace("-----END PUBLIC KEY-----", "")
-        .replace("\n", "")
-        .replace("\r", "")
-        .strip()
-    )
+    """A PEM whose armor or body cannot be read is reported in the same words
+    as one that holds another key type, as verify.mjs words them all (the
+    base64 module's own message is "Incorrect padding")."""
     try:
-        der = base64.b64decode(body)
+        der = base64.b64decode(_pem_body(pem))
     except ValueError:
         der = b""
     prefix = bytes.fromhex("302a300506032b6570032100")
