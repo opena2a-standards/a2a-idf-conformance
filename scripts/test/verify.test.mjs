@@ -543,7 +543,12 @@ function compactPemLines() {
 // verify.mjs does not read (no END line, text on the END line, no line breaks)
 // still gave verify.py a key. verify.py now reads the lines as that library
 // does: a line ends at a line feed or after 254 bytes, a byte order mark before
-// the first line is skipped, and a line of the body ends at a NUL.
+// the first line is skipped, and a line of the body ends at a NUL. verify.mjs
+// now reads them by the same rules itself. The last variants of each group
+// fail when one of these rules is left out of verify.py: a lone surrogate
+// counts as three bytes toward a line, a byte order mark is skipped before the
+// first line only, the bytes at or below a space at the end of a body line or
+// of the END line are dropped, and the bytes above 0x7f there are not.
 test("text outside the armor of a publicKeyPem is not part of the key in either verifier", (t) => {
   const [begin, body, end] = compactPemLines();
   const pem = `${begin}\n${body}\n${end}\n`;
@@ -560,6 +565,10 @@ test("text outside the armor of a publicKeyPem is not part of the key in either 
     "byte-order-mark": `${String.fromCharCode(0xfeff)}${pem}`,
     "begin-line-after-254-bytes": `${" ".repeat(254)}${pem}`,
     "text-after-a-nul-in-a-body-line": `${begin}\n${body.slice(0, 20)}\u0000x\n${body.slice(20)}\n${end}\n`,
+    "begin-line-after-84-lone-surrogates-and-2-spaces": `${"\udc00".repeat(84)}  ${pem}`,
+    "space-after-the-base64-line": `${begin}\n${body} \n${end}\n`,
+    "space-after-the-end-line": `${begin}\n${body}\n${end} \n`,
+    "nul-after-the-end-line": `${begin}\n${body}\n${end}\u0000\n`,
   };
   const refused = {
     "begin-line-after-253-bytes": `${" ".repeat(253)}${pem}`,
@@ -570,6 +579,8 @@ test("text outside the armor of a publicKeyPem is not part of the key in either 
     "no-begin-line": `${body}\n${end}\n`,
     "no-line-breaks": `${begin}${body}${end}`,
     "non-ascii-in-the-body": `${begin}\n${body.slice(0, 20)}\xe9${body.slice(20)}\n${end}\n`,
+    "byte-order-mark-after-the-first-line": `abc\n${String.fromCharCode(0xfeff)}${pem}`,
+    "non-ascii-after-the-begin-line": `${begin}\xe9\n${body}\n${end}\n`,
   };
   const variants = {};
   const expected = {};
@@ -589,20 +600,154 @@ test("text outside the armor of a publicKeyPem is not part of the key in either 
 
 // A line that would open a block of another label but for a byte above 0x7f at
 // its end. Where measured (Node 26 on macOS arm64) the crypto library
-// verify.mjs calls drops that byte, reads the line as a BEGIN line and does not
-// reach the key below it. verify.py does not depend on how that byte is read:
-// it refuses the key.
-test("verify.py refuses a key below a BEGIN line of another label that ends in a non-ASCII byte", (t) => {
+// verify.mjs called dropped that byte, read the line as a BEGIN line and did
+// not reach the key below it; on Linux arm64 (Node 22) it read past the line.
+// Neither verifier depends on how that library reads the byte now: both refuse
+// the key.
+test("both verifiers refuse a key below a BEGIN line of another label that ends in a non-ASCII byte", (t) => {
   const [begin, body, end] = compactPemLines();
   const path = writeVariant(t, COMPACT_FIXTURE, (fx) => {
     fx.keyidResolution.publicKeyPem = `${begin.replace("PUBLIC KEY", "NOTE")}\xe9\n${begin}\n${body}\n${end}\n`;
   });
-  const result = runVerifier(VERIFIERS.python, path);
-  assert.equal(result.stderr, "");
-  assert.deepEqual(
-    result.stdout.split("\n").slice(1, 3).map((line) => line.trim()),
-    NOT_AN_ED25519_PEM.slice(1),
+  for (const [name, argv] of Object.entries(VERIFIERS)) {
+    const result = runVerifier(argv, path);
+    assert.equal(result.stderr, "", name);
+    assert.deepEqual(
+      result.stdout.split("\n").slice(1, 3).map((line) => line.trim()),
+      NOT_AN_ED25519_PEM.slice(1),
+      name,
+    );
+  }
+});
+
+// The text between the armor lines of a compact-form publicKeyPem must be the
+// base64 text of the key, character for character. verify.py decoded it with
+// the base64 module, which skips characters outside the base64 alphabet and
+// stops at padding, and gave an empty line no meaning, so it accepted every
+// variant below that the crypto library verify.mjs called refused. That
+// library reads past a block of another label, cuts a BEGIN label at a NUL,
+// ignores bytes after the key structure and reads a private key, so verify.mjs
+// accepted variants that verify.py refused, and reached the signature check
+// with a private key. Empty lines may come before the base64 text (RFC 7468
+// Figure 1), and the text may be wrapped over several lines.
+test("both verifiers read the base64 text of a publicKeyPem strictly", (t) => {
+  const [begin, body, end] = compactPemLines();
+  const pem = `${begin}\n${body}\n${end}\n`;
+  const within = (text) => `${begin}\n${body.slice(0, 20)}${text}${body.slice(20)}\n${end}\n`;
+  const privatePem = generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" });
+  const accepted = {
+    "empty-line-before-the-base64-text": `${begin}\n\n${body}\n${end}\n`,
+    "line-of-spaces-before-the-base64-text": `${begin}\n   \n${body}\n${end}\n`,
+    "base64-text-on-two-lines": `${begin}\n${body.slice(0, 20)}\n${body.slice(20)}\n${end}\n`,
+  };
+  const refused = {
+    "empty-line-after-the-base64-text": `${begin}\n${body}\n\n${end}\n`,
+    "line-of-spaces-after-the-base64-text": `${begin}\n${body}\n   \n${end}\n`,
+    "nul-line-after-the-base64-text": `${begin}\n${body}\n\u0000\n${end}\n`,
+    "empty-line-within-the-base64-text": `${begin}\n${body.slice(0, 20)}\n\n${body.slice(20)}\n${end}\n`,
+    "colon-in-the-base64-text": within(":"),
+    "colon-line": `${begin}\n:\n${body}\n${end}\n`,
+    "exclamation-mark-in-the-base64-text": within("!"),
+    "underscore-in-the-base64-text": within("_"),
+    "full-stop-in-the-base64-text": within("."),
+    "vertical-tab-in-the-base64-text": within("\u000b"),
+    "form-feed-in-the-base64-text": within("\u000c"),
+    "delete-in-the-base64-text": within("\u007f"),
+    "space-in-the-base64-text": within(" "),
+    "hyphen-before-the-base64-text": `${begin}\n-${body}\n${end}\n`,
+    "hyphen-in-the-base64-text": within("-"),
+    "padding-after-the-base64-text": `${begin}\n${body}=\n${end}\n`,
+    "one-character-after-the-base64-text": `${begin}\n${body}A\n${end}\n`,
+    "four-characters-after-the-base64-text": `${begin}\n${body}AAAA\n${end}\n`,
+    "base64-line-twice": `${begin}\n${body}\n${body}\n${end}\n`,
+    "a-byte-after-the-key": `${begin}\n${body.slice(0, -1)}A\n${end}\n`,
+    "block-of-another-label-before-the-key": `-----BEGIN NOTE-----\nAAAA\n-----END NOTE-----\n${pem}`,
+    "nul-in-the-begin-label": `${begin.replace("KEY-----", "KEY\u0000-----")}\n${body}\n${end}\n`,
+    "non-ascii-after-the-base64-line": `${begin}\n${body}\xe9\n${end}\n`,
+    "non-ascii-after-the-end-line-on-its-line": `${begin}\n${body}\n${end}\xe9\n`,
+    "private-key": privatePem,
+  };
+  const variants = {};
+  const expected = {};
+  for (const [outcome, group] of [
+    [["PASS", "observed: ACCEPT"], accepted],
+    [NOT_AN_ED25519_PEM, refused],
+  ]) {
+    for (const [name, text] of Object.entries(group)) {
+      variants[`${name}.json`] = literalVariant(COMPACT_FIXTURE, (fx) => (fx.keyidResolution.publicKeyPem = text));
+      expected[`${name}.json`] = outcome;
+    }
+  }
+  const blocks = runOverVariants(t, variants);
+  assert.deepEqual(blocks.node, expected);
+  assert.deepEqual(blocks.python, blocks.node);
+});
+
+// The crypto library verify.mjs called asked for a pass phrase on the terminal
+// and waited when the block carried an encryption header; with no terminal it
+// wrote the prompt to stderr. A fixture must not make a verifier wait for
+// input. The verifiers run with no controlling terminal and no input, under a
+// time limit, so this test cannot wait either.
+test("an encryption header in a publicKeyPem does not make either verifier ask for a pass phrase", (t) => {
+  const [begin, body, end] = compactPemLines();
+  const path = writeVariant(t, COMPACT_FIXTURE, (fx) => {
+    fx.keyidResolution.publicKeyPem = [
+      begin,
+      "Proc-Type: 4,ENCRYPTED",
+      `DEK-Info: AES-128-CBC,${"0".repeat(32)}`,
+      "",
+      body,
+      end,
+      "",
+    ].join("\n");
+  });
+  for (const [name, argv] of Object.entries(VERIFIERS)) {
+    const result = runVerifier(argv, path, { detached: true, stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 });
+    assert.equal(result.error, undefined, name);
+    assert.equal(result.stderr, "", name);
+    assert.equal(result.status, 1, name);
+    assert.deepEqual(
+      result.stdout.split("\n").slice(1, 3).map((line) => line.trim()),
+      NOT_AN_ED25519_PEM.slice(1),
+      name,
+    );
+  }
+});
+
+// A reason that quotes a fixture string printed its control characters as they
+// are, so a fixture could break the report line or move the cursor and erase
+// lines on a terminal. Both verifiers write a C0 or C1 control character in a
+// printed line as a lowercase \uXXXX escape; a schema reason already wrote a C0
+// control character that way, as JSON text, but not a C1 one.
+test("a control character in a quoted value is written as an escape by both verifiers", (t) => {
+  const DID_FIXTURE = "fixtures/composition/aim-did-rfc9421/bilateral-receipt.json";
+  const variants = {};
+  const expected = {};
+  for (const [name, value, reason] of [
+    ["escape-sequences", "x\u001b[1A\u001b[2KPASS", "unsupported multibase prefix in x\\u001b[1A\\u001b[2KPASS"],
+    ["line-feed", "z\n", "invalid base58 character: \\u000a"],
+    ["carriage-return", "x\rPASS", "unsupported multibase prefix in x\\u000dPASS"],
+    ["delete", "z\u007f", "invalid base58 character: \\u007f"],
+    ["c1-control", "x\u009b2K", "unsupported multibase prefix in x\\u009b2K"],
+  ]) {
+    variants[`${name}.json`] = literalVariant(
+      DID_FIXTURE,
+      (fx) => (fx.keyidResolution.document.verificationMethod[0].publicKeyMultibase = value),
+    );
+    expected[`${name}.json`] = ["FAIL", "stage:  public-key-extraction", `reason: ${reason}`];
+  }
+  variants["schema-reason-c1-control.json"] = literalVariant(
+    "fixtures/levels/level-0-self-asserted.json",
+    (fx) => (fx.expected.verifyResult = "X\u009b\u001b"),
   );
+  expected["schema-reason-c1-control.json"] = [
+    "FAIL",
+    "stage:  schema",
+    'reason: expected.verifyResult: "X\\u009b\\u001b" is not one of "ACCEPT", "REJECT"',
+  ];
+  const blocks = runOverVariants(t, variants);
+  assert.deepEqual(blocks.node, expected);
+  assert.deepEqual(blocks.python, blocks.node);
 });
 
 // Reject reasons of level fixtures that the two verifiers worded differently:
@@ -610,8 +755,10 @@ test("verify.py refuses a key below a BEGIN line of another label that ends in a
 // params that are a JSON array (verify.mjs took an array as params), a Level 2
 // signature that is not 64 bytes (verify.py had a reason of its own), and a
 // quoted string holding a lone surrogate, which UTF-8 cannot encode (U+FFFD
-// from verify.mjs, \ud800 from verify.py). The variants pin ACCEPT, so the
-// reason is printed.
+// from verify.mjs, \ud800 from verify.py), each of them when it holds two. A
+// provider URL holding two lone surrogates names an opaque host in which the
+// URL parser read each of them as U+FFFD and percent-encoded it. The variants
+// pin ACCEPT, so the reason is printed.
 test("level reject reasons are worded the same way in both verifiers", (t) => {
   const LEVEL_1 = "fixtures/levels/level-1-domain-verified.json";
   const LEVEL_2 = "fixtures/levels/level-2-organization-verified.json";
@@ -664,6 +811,22 @@ test("level reject reasons are worded the same way in both verifiers", (t) => {
       "SHAPE_INVALID",
       "unknown identityLevel: X�",
       '"X\\ud800"',
+    ],
+    [
+      "two-lone-surrogates",
+      LEVEL_1,
+      (fx) => (identityParams(fx).identityLevel = PLACEHOLDER),
+      "SHAPE_INVALID",
+      "unknown identityLevel: ��",
+      '"\\ud800\\ud800"',
+    ],
+    [
+      "provider-url-two-lone-surrogates",
+      LEVEL_1,
+      (fx) => (fx.agentCard.provider.url = PLACEHOLDER),
+      "DOMAIN_MISMATCH",
+      "attestation domain example.com != provider domain ex%EF%BF%BD%EF%BF%BDample.com",
+      '"foo://ex\\ud800\\ud800ample.com/"',
     ],
   ]) {
     variants[`${name}.json`] = literalVariant(
