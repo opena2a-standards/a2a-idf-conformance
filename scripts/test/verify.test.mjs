@@ -752,9 +752,10 @@ test("a control character in a quoted value is written as an escape by both veri
 
 // The escape written for a control character was not itself escaped, so a
 // quoted value of the six characters \u001b printed the same line as one of
-// U+001B. Both verifiers write a backslash followed by "u" in a printed line as
-// \, and only that backslash; a schema reason quotes a string as JSON
-// text, which writes a backslash as \\ already, and keeps its backslashes.
+// U+001B. Both verifiers write a backslash followed by "u" in a printed line
+// that is not JSON text as \u005c, and only that backslash. A schema reason, and
+// the reconstructed: and expected: lines of verify.mjs, quote strings as JSON
+// text, which writes a backslash as \\ already, and keep their backslashes.
 test("a backslash before u in a quoted value is escaped by both verifiers", (t) => {
   const DID_FIXTURE = "fixtures/composition/aim-did-rfc9421/bilateral-receipt.json";
   const variants = {};

@@ -890,7 +890,7 @@ function collectFixtures(arg) {
 // Prints a line that can quote a fixture string as it is. A C0 or C1 control
 // character (U+0000 to U+001F, U+007F to U+009F) is written as a lowercase
 // \uXXXX escape, as in verify.py, so a fixture cannot break the line or send the
-// terminal a command. So is a backslash followed by "u" (\), so a \u in the
+// terminal a command. So is a backslash followed by "u" (\u005c), so a \u in the
 // line always begins an escape: a value of the six characters \u001b is not
 // printed as U+001B is. A line of JSON text (jsonText true) keeps its
 // backslashes, which JSON text writes as \\ already.
