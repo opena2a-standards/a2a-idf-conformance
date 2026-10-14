@@ -109,10 +109,15 @@ def parse_verifier_spec(spec: str) -> tuple[str, list[str]]:
 
 
 def parse_output(stdout: str) -> dict[str, dict]:
-    """Parse verifier stdout into {fixture_key: {gate, verdict, category}}."""
+    """Parse verifier stdout into {fixture_key: {gate, verdict, category}}.
+
+    Lines are split at line feeds only, as the verifiers write them. A reason
+    can quote a fixture value as it is, and str.splitlines() would also break
+    a line at a separator in it (U+2028, U+2029), which the verifiers do not
+    escape, so the rest of the value would be read as block lines."""
     records: dict[str, dict] = {}
     current: str | None = None
-    for line in stdout.splitlines():
+    for line in stdout.split("\n"):
         block = parse_block_line(line)
         if block:
             gate, path = block

@@ -1301,8 +1301,10 @@ def main() -> int:
                 _print(f"FAIL  {path}")
             if observed is not None:
                 _print(f"      observed: {observed}")
+            # A schema reason quotes a string as JSON text.
+            json_text = "stage:  schema" in lines
             for line in lines:
-                _print(f"      {line}")
+                _print(f"      {line}", json_text)
         except Exception as exc:
             fail_count += 1
             _print(f"ERROR {path}")
@@ -1312,17 +1314,23 @@ def main() -> int:
 
 
 _CONTROL = re.compile("[\x00-\x1f\x7f-\x9f]")
+_CONTROL_OR_BACKSLASH_U = re.compile("[\x00-\x1f\x7f-\x9f]|\\\\(?=u)")
 
 
-def _print(line: str) -> None:
+def _print(line: str, json_text: bool = False) -> None:
     """Print a line that can quote a fixture string as it is. A C0 or C1
     control character (U+0000 to U+001F, U+007F to U+009F) is written as a
     lowercase \\uXXXX escape, as in verify.mjs, so a fixture cannot break the
-    line or send the terminal a command. A lone surrogate, which UTF-8 cannot
-    encode, is written as U+FFFD, as console.log in verify.mjs writes it. A
-    schema reason quotes a string as JSON text, where _json_text has already
-    escaped a lone surrogate and a C0 control character."""
-    line = _CONTROL.sub(lambda m: f"\\u{ord(m.group()):04x}", line)
+    line or send the terminal a command. So is a backslash followed by "u"
+    (\\u005c), so a \\u in the line always begins an escape: a value of the six
+    characters \\u001b is not printed as U+001B is. A line of JSON text
+    (json_text true) keeps its backslashes, which JSON text writes as \\\\
+    already. A lone surrogate, which UTF-8 cannot encode, is written as U+FFFD,
+    as console.log in verify.mjs writes it. A schema reason quotes a string as
+    JSON text, where _json_text has already escaped a lone surrogate and a C0
+    control character."""
+    pattern = _CONTROL if json_text else _CONTROL_OR_BACKSLASH_U
+    line = pattern.sub(lambda m: f"\\u{ord(m.group()):04x}", line)
     print(_SURROGATE.sub("�", line))
 
 
