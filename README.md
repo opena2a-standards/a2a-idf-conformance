@@ -6,11 +6,13 @@ Implementations of A2A-IDF run the fixtures in this repository to verify byte-ma
 
 ## Testing an implementation
 
-Run the parity gate from a clone of the suite. It runs every fixture through the Node and Python reference verifiers and passes only when both agree with each other and with the outcome pinned in each fixture. The `pip` line downloads `cryptography`, the Python verifier's one dependency, and installs it into the active Python environment ([other install options](./scripts/README.md#install)).
+Run the parity gate from a clone of the suite. It runs every fixture through the Node and Python reference verifiers and passes only when both agree with each other and with the outcome pinned in each fixture. The `venv` line creates a virtual environment in `.venv` and the next line activates it in the current shell, so the `pip` line downloads `cryptography`, the Python verifier's one dependency, and installs it into that environment. Outside a virtual environment, a Python marked as externally managed (PEP 668), such as Homebrew Python, refuses the `pip` line with `error: externally-managed-environment` ([other install options](./scripts/README.md#install)).
 
 ```bash
 git clone https://github.com/opena2a-standards/a2a-idf-conformance
 cd a2a-idf-conformance
+python3 -m venv .venv
+. .venv/bin/activate
 python3 -m pip install cryptography
 python3 scripts/parity/parity.py
 ```

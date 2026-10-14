@@ -937,12 +937,15 @@ function main() {
       report(`ERROR ${abs}`);
       // A failed system call (ENOENT, ENOTDIR, EACCES, ELOOP) and an entry the
       // walk does not read are problems with the input, and their message names
-      // the path; a stack trace is kept for a verifier fault, one line of it at
-      // a time. collectFixtures walks directories, so no directory is read as a
-      // file (EISDIR, whose message names no path).
+      // the path; a stack trace is kept for a verifier fault. The trace is one
+      // report line, its line feeds written as \u000a, because its message can
+      // quote fixture text (a JSON.parse syntax error quotes the text around the
+      // error) and a line feed there would start a line the parity gate reads.
+      // collectFixtures walks directories, so no directory is read as a file
+      // (EISDIR, whose message names no path).
       const inputError = err.syscall !== undefined || err === listingError;
       if (inputError) report(`      ${err.message}`);
-      else for (const line of `      ${err.stack ?? err.message}`.split("\n")) report(line);
+      else report(`      ${err.stack ?? err.message}`);
     }
   }
   console.log(`summary: ${passCount} pass, ${failCount} fail (${paths.length} fixtures)`);
