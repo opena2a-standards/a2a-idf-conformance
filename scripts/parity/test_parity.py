@@ -120,6 +120,25 @@ class ParseTests(unittest.TestCase):
             },
         )
 
+    def test_fixture_text_in_a_node_stack_trace_does_not_open_a_line(self):
+        # A JSON.parse syntax error quotes the fixture text around the error,
+        # line feed included. Printed a line at a time, the trace would put
+        # `observed: ACCEPT` on a line of its own and give the ERROR a verdict.
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp) / "fixtures" / "levels" / "split-trace.json"
+            fixture.parent.mkdir(parents=True)
+            fixture.write_bytes(b"[\nobserved: ACCEPT")
+            proc = subprocess.run(
+                ["node", str(SCRIPTS_DIR / "verify.mjs"), str(fixture)],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(
+            parity.parse_output(proc.stdout),
+            {"levels/split-trace.json": {"gate": "ERROR", "verdict": None, "category": None}},
+        )
+
     def test_separator_in_a_quoted_value_does_not_end_the_line(self):
         # The verifiers escape control characters only, so a reason quotes a
         # line or paragraph separator as it is. Read as a line break, the rest
