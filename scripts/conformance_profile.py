@@ -69,33 +69,36 @@ SUITE = {
 }
 
 
-# README.md coverage claims must not outrun `notCovered`. While one of these
-# sections is listed there, any README.md line that states this repository's
-# coverage and names the envelope must mark it "(unverified)". Removing the
-# notCovered entry (once the verifiers check the envelope) lifts the requirement.
+# Coverage claims in README.md and docs/coverage.md must not outrun
+# `notCovered`. While one of these sections is listed there, any line of those
+# documents that states this repository's coverage and names the envelope must
+# mark it "(unverified)". Removing the notCovered entry (once the verifiers
+# check the envelope) lifts the requirement.
 UNVERIFIED_ENVELOPES = {
     "§7 Delegation chains": "delegation chain",
     "§8 Bilateral receipts": "bilateral receipt",
 }
+README_CLAIM_DOCS = ("README.md", "docs/coverage.md")
 README_CLAIM_MARKERS = ("it covers", "this repo")
 
 
 def readme_claim_errors() -> list[str]:
-    lines = (REPO_ROOT / "README.md").read_text(encoding="utf-8").splitlines()
     open_sections = [entry["specSection"] for entry in SUITE["notCovered"]]
     errors = []
-    for section, term in UNVERIFIED_ENVELOPES.items():
-        if not any(s.startswith(section) for s in open_sections):
-            continue
-        for number, line in enumerate(lines, start=1):
-            low = line.lower()
-            if not any(marker in low for marker in README_CLAIM_MARKERS):
+    for doc in README_CLAIM_DOCS:
+        lines = (REPO_ROOT / doc).read_text(encoding="utf-8").splitlines()
+        for section, term in UNVERIFIED_ENVELOPES.items():
+            if not any(s.startswith(section) for s in open_sections):
                 continue
-            if term in low and "(unverified)" not in low:
-                errors.append(
-                    f"README.md:{number} claims {term} coverage, but notCovered lists "
-                    f"'{section}'; mark it \"(unverified)\""
-                )
+            for number, line in enumerate(lines, start=1):
+                low = line.lower()
+                if not any(marker in low for marker in README_CLAIM_MARKERS):
+                    continue
+                if term in low and "(unverified)" not in low:
+                    errors.append(
+                        f"{doc}:{number} claims {term} coverage, but notCovered lists "
+                        f"'{section}'; mark it \"(unverified)\""
+                    )
     return errors
 
 

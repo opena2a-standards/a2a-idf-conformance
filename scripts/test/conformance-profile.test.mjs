@@ -17,7 +17,7 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 function scratchCopy(t) {
   const root = mkdtempSync(join(tmpdir(), "profile-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const rel of ["scripts/conformance_profile.py", "README.md", "COSIGNERS.md", "conformance.json", "fixtures"]) {
+  for (const rel of ["scripts/conformance_profile.py", "README.md", "docs/coverage.md", "COSIGNERS.md", "conformance.json", "fixtures"]) {
     cpSync(join(REPO, rel), join(root, rel), { recursive: true });
   }
   return root;
@@ -91,6 +91,23 @@ test("--check fails when README.md says the suite composes with a layer no fixtu
   assert.match(
     lines[0],
     /^README\.md:\d+ says the suite composes with the identity claims \(CTEF\) layer \(a2aproject\/A2A#1786\), but no fixture /,
+  );
+});
+
+// The layer table in docs/coverage.md states this repository's coverage of the
+// delegation chain envelope, which notCovered lists.
+test("--check fails when docs/coverage.md claims an envelope notCovered lists without \"(unverified)\"", (t) => {
+  const root = scratchCopy(t);
+  editFile(root, "docs/coverage.md", (text) =>
+    text.replace("delegation chain envelope shapes (unverified)", "delegation chain envelope shapes"),
+  );
+  const result = check(root);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  const lines = result.stdout.trim().split("\n");
+  assert.equal(lines.length, 1, result.stdout);
+  assert.match(
+    lines[0],
+    /^docs\/coverage\.md:\d+ claims delegation chain coverage, but notCovered lists '§7 Delegation chains/,
   );
 });
 
