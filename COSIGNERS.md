@@ -14,14 +14,26 @@ A2A coordination map's criterion (c) on
 
 ## How to cosign
 
+The `venv` line creates a virtual environment in `.venv` and the next line
+activates it in the current shell, so the `pip` line installs `cryptography`,
+the Python verifier's one dependency, into that environment. Outside a virtual
+environment, a Python marked as externally managed (PEP 668), such as Homebrew
+Python, refuses the `pip` line with `error: externally-managed-environment`
+([other install options](./scripts/README.md#install)).
+
 ```bash
 # Clone and verify
 git clone https://github.com/opena2a-standards/a2a-idf-conformance
 cd a2a-idf-conformance
 
+# Install the Python verifier's dependency into a virtual environment
+python3 -m venv .venv
+. .venv/bin/activate
+python3 -m pip install "cryptography>=42.0.0"
+
 # Run both verifiers and record exit summaries
 node scripts/verify.mjs fixtures
-python3 -m pip install "cryptography>=42.0.0" && python3 scripts/verify.py fixtures
+python3 scripts/verify.py fixtures
 
 # Sigstore keyless cosign over MANIFEST.sha256
 cosign sign-blob MANIFEST.sha256 \
