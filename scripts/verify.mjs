@@ -939,7 +939,8 @@ function main() {
       // walk does not read are problems with the input, and their message names
       // the path; a stack trace is kept for a verifier fault. The trace is one
       // report line, its line feeds written as \u000a, because its message can
-      // quote fixture text (a JSON.parse syntax error quotes the text around the
+      // quote fixture text (an unsupported component error quotes the component
+      // value, and a JSON.parse syntax error can quote the text around the
       // error) and a line feed there would start a line the parity gate reads.
       // collectFixtures walks directories, so no directory is read as a file
       // (EISDIR, whose message names no path).

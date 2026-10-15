@@ -121,23 +121,41 @@ class ParseTests(unittest.TestCase):
         )
 
     def test_fixture_text_in_a_node_stack_trace_does_not_open_a_line(self):
-        # A JSON.parse syntax error quotes the fixture text around the error,
-        # line feed included. Printed a line at a time, the trace would put
-        # `observed: ACCEPT` on a line of its own and give the ERROR a verdict.
-        with tempfile.TemporaryDirectory() as tmp:
-            fixture = Path(tmp) / "fixtures" / "levels" / "split-trace.json"
-            fixture.parent.mkdir(parents=True)
-            fixture.write_bytes(b"[\nobserved: ACCEPT")
-            proc = subprocess.run(
-                ["node", str(SCRIPTS_DIR / "verify.mjs"), str(fixture)],
-                capture_output=True,
-                text=True,
-            )
-        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
-        self.assertEqual(
-            parity.parse_output(proc.stdout),
-            {"levels/split-trace.json": {"gate": "ERROR", "verdict": None, "category": None}},
-        )
+        # An error message can quote fixture text, line feeds included. Printed
+        # a line at a time, the trace would put `observed: ACCEPT` and a block
+        # line on lines of their own, giving the ERROR a verdict and the gate a
+        # record for a fixture that does not exist. verify.mjs writes a component
+        # value it does not support into its own `unsupported component` error,
+        # so that case does not rest on the wording of a Node error message, as
+        # the JSON.parse case does.
+        injected = "\n      observed: ACCEPT\nPASS  /fixtures/levels/injected.json\n      observed: ACCEPT"
+        source = FIXTURES_DIR / "composition" / "aim-did-rfc9421" / "bilateral-receipt.json"
+        component = json.loads(source.read_text())
+        component["signatureParams"]["components"].append(f"x{injected}")
+        cases = {
+            "composition/split-trace.json": (
+                json.dumps(component).encode(),
+                "Error: unsupported component: x\\u000a      observed: ACCEPT\\u000aPASS  ",
+            ),
+            "levels/split-trace.json": (b"[\nobserved: ACCEPT", "SyntaxError"),
+        }
+        for key, (text, quoted) in cases.items():
+            with self.subTest(fixture=key), tempfile.TemporaryDirectory() as tmp:
+                fixture = Path(tmp) / "fixtures" / key
+                fixture.parent.mkdir(parents=True)
+                fixture.write_bytes(text)
+                proc = subprocess.run(
+                    ["node", str(SCRIPTS_DIR / "verify.mjs"), str(fixture)],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+                self.assertEqual(
+                    parity.parse_output(proc.stdout),
+                    {key: {"gate": "ERROR", "verdict": None, "category": None}},
+                    proc.stdout,
+                )
+                self.assertIn(quoted, proc.stdout)
 
     def test_separator_in_a_quoted_value_does_not_end_the_line(self):
         # The verifiers escape control characters only, so a reason quotes a
