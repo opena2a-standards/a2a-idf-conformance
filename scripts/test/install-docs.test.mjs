@@ -1,4 +1,5 @@
-// Regression tests for the install commands in README.md and scripts/README.md.
+// Regression tests for the install commands in README.md, scripts/README.md
+// and COSIGNERS.md.
 // A Python marked as externally managed (PEP 668) refuses `pip install`
 // outside a virtual environment, so each documented `pip install` line must
 // run with `python3` resolving to a virtual environment the block created.
@@ -32,7 +33,7 @@ function bashBlocks(text) {
   return blocks;
 }
 
-for (const rel of ["README.md", "scripts/README.md"]) {
+for (const rel of ["README.md", "scripts/README.md", "COSIGNERS.md"]) {
   test(`${rel}: each pip install line runs inside a virtual environment the block creates`, (t) => {
     const blocks = bashBlocks(readFileSync(join(REPO, rel), "utf8"))
       .map((lines) => ({ lines, pip: lines.findIndex((line) => /^python3 -m pip install\b/.test(line)) }))
