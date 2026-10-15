@@ -3,6 +3,8 @@
 // A Python marked as externally managed (PEP 668) refuses `pip install`
 // outside a virtual environment, so each documented `pip install` line must
 // run with `python3` resolving to a virtual environment the block created.
+// Running those lines takes `bash` and the Python `venv` module, so each
+// statement in scripts/README.md of what the tooling tests need names both.
 //
 // Usage:  node --test scripts/test/*.test.mjs
 
@@ -57,3 +59,21 @@ for (const rel of ["README.md", "scripts/README.md", "COSIGNERS.md"]) {
     }
   });
 }
+
+// A statement of what the tooling tests need is a "need"/"needs" clause in
+// scripts/README.md that names both git and `cryptography`; the clause ends at
+// a full stop or a parenthesis.
+test("scripts/README.md: each statement of what the tooling tests need names bash and the venv module", () => {
+  const rel = "scripts/README.md";
+  const statements = [];
+  readFileSync(join(REPO, rel), "utf8").split("\n").forEach((line, index) => {
+    for (const match of line.matchAll(/\bneeds? [^.()]*/gi)) {
+      if (/\bgit\b/.test(match[0]) && /cryptography/.test(match[0])) statements.push({ line: index + 1, text: match[0] });
+    }
+  });
+  assert.ok(statements.length > 0, `${rel} has no statement of what the tooling tests need`);
+  for (const { line, text } of statements) {
+    assert.match(text, /\bbash\b/, `${rel}:${line} "${text}" does not name bash, which runs the install commands`);
+    assert.match(text, /\bvenv\b/, `${rel}:${line} "${text}" does not name the venv module, which creates the virtual environment`);
+  }
+});

@@ -96,7 +96,7 @@ node --test scripts/test/*.test.mjs
 - [`parity/test_fixture_schema.py`](./parity/test_fixture_schema.py) — the `schema` stage of both verifiers: removes each required field (and alters typed or enumerated ones) in copies of committed fixtures and asserts that both verifiers fail them at stage `schema` while the unmodified copies pass. When the `jsonschema` package is installed it also checks the cases with a full JSON Schema validator.
 - [`test/`](./test/) — the path checks of `check-doc-links.mjs`, the `COSIGNERS.md` baseline count check of `conformance_profile.py --check`, and, in both verifiers, unpinned byte-identity claims, the wording of reasons that quote a fixture value, how `created` is written in the signature base, keys that cannot be extracted, text outside the armor of a compact-form `publicKeyPem` and the base64 text and encryption headers within it, control characters and a backslash before `u` in a quoted value, symlinks, sockets and FIFOs met during the walk, and paths that cannot be read, listed or searched.
 
-Run both commands from the repository root. They need Node, git and the Python `cryptography` package. Several tests run a copy of the suite in a temporary directory, so none of them writes to `fixtures/`.
+Run both commands from the repository root. They need Node, git, `bash`, and `python3` with the `cryptography` package and the `venv` module. Several tests run a copy of the suite in a temporary directory, so none of them writes to `fixtures/`.
 
 ## Cross-implementation guarantee
 
