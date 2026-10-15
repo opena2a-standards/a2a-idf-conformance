@@ -94,6 +94,23 @@ test("--check fails when README.md says the suite composes with a layer no fixtu
   );
 });
 
+// docs/coverage.md states the CTEF layer as not yet composed, in a sentence of
+// its own; the edit turns that sentence into a claim that the suite composes it.
+test("--check fails when docs/coverage.md says the suite composes with a layer no fixture composes", (t) => {
+  const root = scratchCopy(t);
+  editFile(root, "docs/coverage.md", (text) =>
+    text.replace("is adjacent but not yet composed", "is one the suite composes with"),
+  );
+  const result = check(root);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  const lines = result.stdout.trim().split("\n");
+  assert.equal(lines.length, 1, result.stdout);
+  assert.match(
+    lines[0],
+    /^docs\/coverage\.md:\d+ says the suite composes with the identity claims \(CTEF\) layer \(a2aproject\/A2A#1786\), but no fixture /,
+  );
+});
+
 // The layer table in docs/coverage.md states this repository's coverage of the
 // delegation chain envelope, which notCovered lists.
 test("--check fails when docs/coverage.md claims an envelope notCovered lists without \"(unverified)\"", (t) => {

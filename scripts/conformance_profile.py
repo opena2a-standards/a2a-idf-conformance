@@ -115,7 +115,7 @@ ADJACENT_LAYERS = {
     "1786": ("identity claims (CTEF)", ("CTEF",), r"ctef|identity[- ]claims?"),
     "1575": ("delegation and continuity (APS)", ("APS",), r"aps|delegation(?:/| and )continuity"),
 }
-COMPOSITION_CLAIM_DOCS = ("README.md", "fixtures/composition/README.md")
+COMPOSITION_CLAIM_DOCS = ("README.md", "docs/coverage.md", "fixtures/composition/README.md")
 COMPOSITION_CLAIM_MARKERS = ("composes with", "in combination with")
 
 

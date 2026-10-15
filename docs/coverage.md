@@ -2,6 +2,8 @@
 
 What this suite pins, fixture family by fixture family, and where it sits beside the adjacent conformance suites. The command that runs it is in the [README](../README.md#testing-an-implementation).
 
+Implementations of A2A-IDF run the fixtures in this repository to verify byte-match interoperability against the reference vectors, and compare their verdicts with the pinned outcomes and the reference verifiers through the parity gate (see [Testing an implementation](../README.md#testing-an-implementation)).
+
 ## Status
 
 Byte-pinned and CI-enforced. Every fixture is pinned in [`MANIFEST.sha256`](../MANIFEST.sha256); generator-owned fixtures are reproducible from their documented inputs by [`scripts/generate-fixtures.mjs`](../scripts/generate-fixtures.mjs), and externally contributed snapshot fixtures (regenerated in their source implementation, noted per directory) are preserved and pinned by the same run. CI regenerates the set on every push to `main` and every pull request, and fails on any byte drift. New fixtures land incrementally in coordination with the A2A-IDF specification cycle ([#1496](https://github.com/a2aproject/A2A/pull/1496)) and the broader four-layer alignment.
@@ -22,6 +24,8 @@ Byte-pinned and CI-enforced. Every fixture is pinned in [`MANIFEST.sha256`](../M
 | **Identity framework (verification levels, attestations, delegation chain envelope shapes (unverified))** | **[#1496](https://github.com/a2aproject/A2A/pull/1496)** | **this repo** |
 | Identity claims (CTEF) | [#1786](https://github.com/a2aproject/A2A/issues/1786) | external |
 | Delegation and continuity (APS) | [#1575](https://github.com/a2aproject/A2A/issues/1575) | external |
+
+The identity-claim envelope layer ([#1786](https://github.com/a2aproject/A2A/issues/1786) CTEF) is adjacent but not yet composed: no fixture, schema or verifier code in this repository exercises a CTEF envelope, and a composition fixture depends on the upstream envelope decision.
 
 ## Test vector sources
 
