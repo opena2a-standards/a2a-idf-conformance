@@ -1,0 +1,545 @@
+{
+  "agree": true,
+  "divergences": [],
+  "exitCodes": {
+    "node": 0,
+    "python": 0
+  },
+  "fixtures": {
+    "composition/aim-did-rfc9421/bilateral-receipt.json": {
+      "node": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      },
+      "python": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      }
+    },
+    "composition/aim-did-rfc9421/body-tampered.json": {
+      "node": {
+        "category": "SIGNATURE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "SIGNATURE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "composition/aim-did-rfc9421/cross-suite-mismatch.json": {
+      "node": {
+        "category": "CROSS_SUITE_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "CROSS_SUITE_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "composition/aim-did-rfc9421/delegation-chain-3link.json": {
+      "node": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      },
+      "python": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      }
+    },
+    "composition/aim-did-rfc9421/key-substituted.json": {
+      "node": {
+        "category": "SIGNATURE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "SIGNATURE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "composition/aim-did-rfc9421/signature-alone.json": {
+      "node": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      },
+      "python": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      }
+    },
+    "composition/aim-did-rfc9421/signature-tag-absent.json": {
+      "node": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      },
+      "python": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      }
+    },
+    "composition/aim-did-rfc9421/signature-tag-foreign-tampered.json": {
+      "node": {
+        "category": "TAG_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "TAG_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "composition/aim-did-rfc9421/signature-tag-foreign.json": {
+      "node": {
+        "category": "TAG_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "TAG_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "composition/aim-did-rfc9421/signature-tag-null.json": {
+      "node": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      },
+      "python": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      }
+    },
+    "composition/aim-did-rfc9421/signature-tampered.json": {
+      "node": {
+        "category": "SIGNATURE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "SIGNATURE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "composition/hippo-rfc9421/signature-alone-no-tag.json": {
+      "node": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      },
+      "python": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      }
+    },
+    "composition/hippo-rfc9421/signature-alone-tag.json": {
+      "node": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      },
+      "python": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      }
+    },
+    "levels/level-0-agent-id-malformed.json": {
+      "node": {
+        "category": "SHAPE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "SHAPE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "levels/level-0-agent-id-null.json": {
+      "node": {
+        "category": "SHAPE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "SHAPE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "levels/level-0-self-asserted.json": {
+      "node": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      },
+      "python": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      }
+    },
+    "levels/level-1-agent-mismatch.json": {
+      "node": {
+        "category": "AGENT_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "AGENT_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "levels/level-1-attestations-not-array.json": {
+      "node": {
+        "category": "SHAPE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "SHAPE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "levels/level-1-domain-mismatch.json": {
+      "node": {
+        "category": "DOMAIN_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "DOMAIN_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "levels/level-1-domain-verified.json": {
+      "node": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      },
+      "python": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      }
+    },
+    "levels/level-1-fingerprint-mismatch.json": {
+      "node": {
+        "category": "FINGERPRINT_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "FINGERPRINT_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "levels/level-1-idn-provider-url.json": {
+      "node": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      },
+      "python": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      }
+    },
+    "levels/level-1-kid-mismatch.json": {
+      "node": {
+        "category": "KID_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "KID_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "levels/level-1-multi-defect-domain-and-version.json": {
+      "node": {
+        "category": "DOMAIN_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "DOMAIN_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "levels/level-1-provider-url-backslash-authority.json": {
+      "node": {
+        "category": "DOMAIN_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "DOMAIN_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "levels/level-1-provider-url-ignored-code-point.json": {
+      "node": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      },
+      "python": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      }
+    },
+    "levels/level-1-provider-url-ipv4-number.json": {
+      "node": {
+        "category": "DOMAIN_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "DOMAIN_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "levels/level-1-provider-url-no-host.json": {
+      "node": {
+        "category": "SHAPE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "SHAPE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "levels/level-1-provider-url-not-string.json": {
+      "node": {
+        "category": "SHAPE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "SHAPE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "levels/level-1-provider-url-percent-encoded.json": {
+      "node": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      },
+      "python": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      }
+    },
+    "levels/level-1-provider-url-space-in-host.json": {
+      "node": {
+        "category": "SHAPE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "SHAPE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "levels/level-2-attestation-expired.json": {
+      "node": {
+        "category": "EXPIRED",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "EXPIRED",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "levels/level-2-attestation-non-bmp-keys.json": {
+      "node": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      },
+      "python": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      }
+    },
+    "levels/level-2-attestation-not-yet-valid.json": {
+      "node": {
+        "category": "NOT_YET_VALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "NOT_YET_VALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "levels/level-2-attestation-tampered.json": {
+      "node": {
+        "category": "SIGNATURE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "SIGNATURE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "levels/level-2-issuer-not-object.json": {
+      "node": {
+        "category": "SHAPE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "SHAPE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "levels/level-2-jcs-utf16-key-order.json": {
+      "node": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      },
+      "python": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      }
+    },
+    "levels/level-2-multi-defect-subject-and-evidence.json": {
+      "node": {
+        "category": "SUBJECT_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "SUBJECT_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "levels/level-2-organization-verified.json": {
+      "node": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      },
+      "python": {
+        "category": null,
+        "gate": "PASS",
+        "verdict": "ACCEPT"
+      }
+    },
+    "levels/level-2-subject-mismatch.json": {
+      "node": {
+        "category": "SUBJECT_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "SUBJECT_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "levels/level-2-verified-at-not-string.json": {
+      "node": {
+        "category": "SHAPE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "SHAPE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    }
+  },
+  "pinned": {
+    "composition/aim-did-rfc9421/bilateral-receipt.json": "ACCEPT",
+    "composition/aim-did-rfc9421/body-tampered.json": "REJECT[SIGNATURE_INVALID]",
+    "composition/aim-did-rfc9421/cross-suite-mismatch.json": "REJECT[CROSS_SUITE_MISMATCH]",
+    "composition/aim-did-rfc9421/delegation-chain-3link.json": "ACCEPT",
+    "composition/aim-did-rfc9421/key-substituted.json": "REJECT[SIGNATURE_INVALID]",
+    "composition/aim-did-rfc9421/signature-alone.json": "ACCEPT",
+    "composition/aim-did-rfc9421/signature-tag-absent.json": "ACCEPT",
+    "composition/aim-did-rfc9421/signature-tag-foreign-tampered.json": "REJECT[TAG_MISMATCH]",
+    "composition/aim-did-rfc9421/signature-tag-foreign.json": "REJECT[TAG_MISMATCH]",
+    "composition/aim-did-rfc9421/signature-tag-null.json": "ACCEPT",
+    "composition/aim-did-rfc9421/signature-tampered.json": "REJECT[SIGNATURE_INVALID]",
+    "composition/hippo-rfc9421/signature-alone-no-tag.json": "ACCEPT",
+    "composition/hippo-rfc9421/signature-alone-tag.json": "ACCEPT",
+    "levels/level-0-agent-id-malformed.json": "REJECT[SHAPE_INVALID]",
+    "levels/level-0-agent-id-null.json": "REJECT[SHAPE_INVALID]",
+    "levels/level-0-self-asserted.json": "ACCEPT",
+    "levels/level-1-agent-mismatch.json": "REJECT[AGENT_MISMATCH]",
+    "levels/level-1-attestations-not-array.json": "REJECT[SHAPE_INVALID]",
+    "levels/level-1-domain-mismatch.json": "REJECT[DOMAIN_MISMATCH]",
+    "levels/level-1-domain-verified.json": "ACCEPT",
+    "levels/level-1-fingerprint-mismatch.json": "REJECT[FINGERPRINT_MISMATCH]",
+    "levels/level-1-idn-provider-url.json": "ACCEPT",
+    "levels/level-1-kid-mismatch.json": "REJECT[KID_MISMATCH]",
+    "levels/level-1-multi-defect-domain-and-version.json": "REJECT[DOMAIN_MISMATCH]",
+    "levels/level-1-provider-url-backslash-authority.json": "REJECT[DOMAIN_MISMATCH]",
+    "levels/level-1-provider-url-ignored-code-point.json": "ACCEPT",
+    "levels/level-1-provider-url-ipv4-number.json": "REJECT[DOMAIN_MISMATCH]",
+    "levels/level-1-provider-url-no-host.json": "REJECT[SHAPE_INVALID]",
+    "levels/level-1-provider-url-not-string.json": "REJECT[SHAPE_INVALID]",
+    "levels/level-1-provider-url-percent-encoded.json": "ACCEPT",
+    "levels/level-1-provider-url-space-in-host.json": "REJECT[SHAPE_INVALID]",
+    "levels/level-2-attestation-expired.json": "REJECT[EXPIRED]",
+    "levels/level-2-attestation-non-bmp-keys.json": "ACCEPT",
+    "levels/level-2-attestation-not-yet-valid.json": "REJECT[NOT_YET_VALID]",
+    "levels/level-2-attestation-tampered.json": "REJECT[SIGNATURE_INVALID]",
+    "levels/level-2-issuer-not-object.json": "REJECT[SHAPE_INVALID]",
+    "levels/level-2-jcs-utf16-key-order.json": "ACCEPT",
+    "levels/level-2-multi-defect-subject-and-evidence.json": "REJECT[SUBJECT_MISMATCH]",
+    "levels/level-2-organization-verified.json": "ACCEPT",
+    "levels/level-2-subject-mismatch.json": "REJECT[SUBJECT_MISMATCH]",
+    "levels/level-2-verified-at-not-string.json": "REJECT[SHAPE_INVALID]"
+  }
+}

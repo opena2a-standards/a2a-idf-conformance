@@ -17,7 +17,7 @@ python3 -m pip install cryptography
 python3 scripts/parity/parity.py
 ```
 
-What `python3 scripts/parity/parity.py` prints, trimmed:
+What `python3 scripts/parity/parity.py` prints, trimmed ([full output](./docs/captures/parity.txt)):
 
 ```
 ...
@@ -91,7 +91,7 @@ If your PR wraps an existing wire-signature implementation in A2A-IDF §6 resolu
 ### Requirements
 
 1. **Generated, not hand-edited.** Fixtures are owned by [`scripts/generate-fixtures.mjs`](./scripts/generate-fixtures.mjs): add your fixture's generation code there and run it to emit the fixture and refresh `MANIFEST.sha256`. CI regenerates the whole set and fails on any byte difference, so a hand-edited fixture cannot merge. Snapshot-only fixtures (signatures committed without enough information to regenerate them) are not accepted.
-2. **Passes both reference verifiers and the parity gate.** `node scripts/verify.mjs fixtures` and `python3 scripts/verify.py fixtures` must both report `0 fail`, and `python3 scripts/parity/parity.py` must report PARITY: PASS.
+2. **Passes both reference verifiers and the parity gate.** `node scripts/verify.mjs fixtures` and `python3 scripts/verify.py fixtures` must both report `0 fail`, and `python3 scripts/parity/parity.py` must report PARITY: PASS. When the gate's output changes, refresh the [captured run](./docs/captures/parity.txt) with `python3 scripts/parity/parity.py --json docs/captures/parity.json > docs/captures/parity.txt`.
 3. **Matches the schema** for its family: [`schemas/fixture-composition-v1.json`](./schemas/fixture-composition-v1.json) (prose: [`fixtures/composition/SCHEMA.md`](./fixtures/composition/SCHEMA.md)) for composition fixtures, [`schemas/fixture-level-v1.json`](./schemas/fixture-level-v1.json) (prose: [`fixtures/levels/README.md`](./fixtures/levels/README.md)) for verification-level fixtures. Both verifiers enforce it: a fixture that does not match fails at stage `schema`.
 
 Coordination thread: [a2aproject/A2A#1496](https://github.com/a2aproject/A2A/pull/1496).
