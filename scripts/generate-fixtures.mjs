@@ -1,11 +1,18 @@
 #!/usr/bin/env node
 // Deterministic fixture generator for the A2A-IDF conformance suite.
 //
-// Regenerates every file under fixtures/ and vectors/, plus MANIFEST.sha256,
-// from the RFC 8032 §7.1 test seeds and the fixture templates below. Running
-// it twice produces byte-identical output; CI enforces that the committed
-// tree matches a fresh generation (`git diff --exit-code`), so the committed
-// fixtures cannot drift from their documented inputs.
+// Writes the fixtures and vectors listed in FILES below from the RFC 8032
+// §7.1 test seeds and the fixture templates in this file, then writes
+// MANIFEST.sha256 from the JSON files under fixtures/ and vectors/ as it finds
+// them. Running it twice produces byte-identical output. CI reruns it and then
+// runs `git diff --exit-code` (the byte-pin step), so a committed fixture that
+// differs from what this script writes for it fails CI.
+//
+// The two snapshot fixtures in fixtures/composition/hippo-rfc9421/ are not in
+// FILES: they are pinned in MANIFEST.sha256 but not regenerated. The manifest
+// pins them as found, so the byte-pin step fails when one of them changes
+// without MANIFEST.sha256 and passes when the change is committed together
+// with the refreshed MANIFEST.sha256.
 //
 // Pure Node stdlib. Ed25519 signing is deterministic (RFC 8032), so the
 // signature bytes are stable across runs and platforms.
