@@ -152,7 +152,7 @@ When `byteIdentical: true` and the signature verifies, the verifier base64-encod
 
 Before opening a PR:
 
-- [ ] The fixture is emitted by `scripts/generate-fixtures.mjs` (add your generation code there and rerun it — CI regenerates the set and fails on any byte difference, so hand-edited fixtures cannot merge)
+- [ ] The fixture is emitted by `scripts/generate-fixtures.mjs` (add your generation code there and rerun it — CI reruns the generator and fails when a fixture it writes differs from the committed file, so a pull request that edits a generated fixture by hand fails CI and is not merged)
 - [ ] `node scripts/verify.mjs <fixture.json>` returns `PASS`
 - [ ] `python3 scripts/verify.py <fixture.json>` returns `PASS`
 - [ ] The keypair is either RFC 8032 §7.1 (referenced via `keypairRef`) or an independent test keypair whose private key is documented in the source repo
