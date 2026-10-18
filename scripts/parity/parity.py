@@ -22,14 +22,16 @@ Usage:
     python3 scripts/parity/parity.py [--json parity-report.json]
                                      [--verifier NAME=COMMAND ...]
 
-`--json` writes the report to PATH. PATH is opened for writing while the
-arguments are read, so a path that cannot be written (in a directory that does
-not exist, a directory, one without write permission) is a usage error before
-any verifier runs. Two consequences: the file is created, or emptied when it
-exists, and stays empty when the run ends before the report is written (a
-usage error found after `--json` is read, or no fixtures found); and with
-`--json` given twice, the first path is created empty and the second is
-written.
+`--json` writes the report to PATH. PATH is opened in append mode once the
+arguments are read and before any verifier runs, so a path that cannot be
+written (in a directory that does not exist, a directory, one without write
+permission) is a usage error before the run. `--help`, `-h` and a usage error
+in the other arguments (an unknown option, a malformed `--verifier`, a
+verifier name already in use) end the run before PATH is opened, so they leave
+it as it was. An existing file keeps its content until the report is written
+in its place; a path that did not exist is created when it is opened, and
+stays empty when the run ends before the report is written (no fixtures
+found). With `--json` given twice, only the second path is opened.
 
 `--verifier` adds an implementation under test. COMMAND is split with
 shell-style quoting (no shell is invoked), run from the current directory, and
@@ -50,8 +52,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -135,15 +139,23 @@ def parse_verifier_spec(spec: str) -> tuple[str, list[str]]:
 
 
 def open_report(path: str) -> TextIO:
-    """argparse type for `--json PATH`: PATH opened for writing.
+    """`--json PATH` opened for the report, with its content left as it is.
 
-    Opened while the arguments are read, so a path that cannot be written is
-    a usage error before any verifier runs, not an exception after the run,
-    which would lose the verdict."""
-    try:
-        return open(path, "w", encoding="utf-8")
-    except OSError as exc:
-        raise argparse.ArgumentTypeError(f"cannot write {path!r}: {exc.strerror}") from exc
+    Opened before any verifier runs, so a path that cannot be written is a
+    usage error, not an exception after the run, which would lose the
+    verdict. Append mode creates a missing file but does not empty an existing
+    one: write_report() replaces the content once the report is ready."""
+    return open(path, "a", encoding="utf-8")
+
+
+def write_report(report: TextIO, text: str) -> None:
+    """Make `text` the whole content of the file open_report() returned, and
+    close it. A regular file is emptied first. A pipe or a device is written
+    as it is: truncate() fails on a pipe."""
+    with report:
+        if stat.S_ISREG(os.fstat(report.fileno()).st_mode):
+            report.truncate(0)
+        report.write(text)
 
 
 def parse_output(stdout: str) -> dict[str, dict]:
@@ -302,9 +314,7 @@ def main(prog: str | None = None) -> int:
         description="Run the reference verifiers and any implementation under test over the "
         "fixture set; fail on any disagreement with each other or with the pinned outcomes."
     )
-    ap.add_argument(
-        "--json", metavar="PATH", type=open_report, help="write a JSON parity report"
-    )
+    ap.add_argument("--json", metavar="PATH", help="write a JSON parity report")
     ap.add_argument(
         "--verifier",
         metavar="NAME=COMMAND",
@@ -322,6 +332,16 @@ def main(prog: str | None = None) -> int:
         if name in verifiers:
             ap.error(f"--verifier: name {name!r} is already in use")
         verifiers[name] = {"cwd": None, "cmd": [*argv, str(FIXTURES_DIR)]}
+
+    # Opened here rather than by an argparse type callable: argparse converts
+    # each option as it reads it, left to right, so a `--help` given after
+    # `--json` would be handled once the file was already open.
+    report = None
+    if args.json is not None:
+        try:
+            report = open_report(args.json)
+        except OSError as exc:
+            ap.error(f"argument --json: cannot write {args.json!r}: {exc.strerror}")
 
     fixture_files = sorted(
         p.relative_to(FIXTURES_DIR).as_posix() for p in FIXTURES_DIR.rglob("*.json")
@@ -396,22 +416,22 @@ def main(prog: str | None = None) -> int:
                 cells.append(f"{n}={r['gate']}:{v}{cat}")
         print(f"  {fx:60s} {'  '.join(cells)}")
 
-    if args.json is not None:
-        with args.json as report:
-            report.write(
-                json.dumps(
-                    {
-                        "fixtures": table,
-                        "pinned": {fx: outcome_str(pin) for fx, pin in pinned.items()},
-                        "exitCodes": exit_codes,
-                        "divergences": divergences,
-                        "agree": not divergences,
-                    },
-                    indent=2,
-                    sort_keys=True,
-                )
-                + "\n"
+    if report is not None:
+        write_report(
+            report,
+            json.dumps(
+                {
+                    "fixtures": table,
+                    "pinned": {fx: outcome_str(pin) for fx, pin in pinned.items()},
+                    "exitCodes": exit_codes,
+                    "divergences": divergences,
+                    "agree": not divergences,
+                },
+                indent=2,
+                sort_keys=True,
             )
+            + "\n",
+        )
 
     if divergences:
         print("\nPARITY: FAIL")

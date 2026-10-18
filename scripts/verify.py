@@ -20,10 +20,11 @@ Usage:  python3 verify.py <fixture.json | directory> [...]
 Directories are walked recursively for *.json fixtures. --help (or -h)
 prints the usage on stdout. Any other argument that starts with "-", other
 than "-" alone, is an unknown option, never a fixture path; every argument
-after "--" is a path.
+after "--" is a path. An empty argument is a usage error, not the current
+directory.
 Exit code: 0 if every fixture's expected verdict (and reject category,
-when pinned) is met, else 1; 2 for a usage error (no path, or an unknown
-option).
+when pinned) is met, else 1; 2 for a usage error (no path, an empty
+argument, or an unknown option).
 """
 
 from __future__ import annotations
@@ -1307,6 +1308,12 @@ def main() -> int:
     path_args = args[:end] + args[end + 1 :]
     if not path_args:
         print(USAGE, file=sys.stderr)
+        return 2
+    # An empty argument, as an unset shell variable gives in "$FIXTURE", names no
+    # file, and os.path.abspath would read it as the current directory and walk it.
+    if "" in path_args:
+        print(USAGE, file=sys.stderr)
+        print("verify.py: an empty argument is not a path", file=sys.stderr)
         return 2
 
     # A stdout that is not UTF-8 may not encode every character of a line: print

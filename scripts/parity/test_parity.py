@@ -93,10 +93,9 @@ def run_parity(*args: str, cwd: Path) -> tuple[subprocess.CompletedProcess, dict
         capture_output=True,
         text=True,
     )
-    # The gate opens the report file when it reads `--json`, so a run that
-    # ends before the report is written (a usage error) leaves the file empty.
-    text = report.read_text() if report.exists() else ""
-    data = json.loads(text) if text else None
+    # The gate opens the report file once the arguments are read, so a run
+    # that ends at a usage error leaves no file.
+    data = json.loads(report.read_text()) if report.exists() else None
     return proc, data
 
 
@@ -437,6 +436,76 @@ class JsonReportPathTests(unittest.TestCase):
     def test_directory_is_a_usage_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assert_refused(Path(tmp), tmp)
+
+
+# Longer than the report of the committed fixture set, so a report written
+# after this text, or over its start, leaves a file json.loads() refuses.
+PREVIOUS_REPORT = "previous report\n" * 10000
+
+
+class JsonReportContentTests(unittest.TestCase):
+    """The `--json` file changes only when the report is written in its place."""
+
+    def test_help_and_usage_errors_leave_the_path_as_it_was(self):
+        for args, code in (
+            (["--help"], 0),
+            (["-h"], 0),
+            (["--no-such-option"], 2),
+            (["--verifier", "no-equals-sign"], 2),
+            (["--verifier", "node=./other"], 2),
+        ):
+            with self.subTest(args=args), tempfile.TemporaryDirectory() as tmp:
+                existing, missing = Path(tmp) / "existing.json", Path(tmp) / "missing.json"
+                existing.write_text(PREVIOUS_REPORT)
+                for path in (existing, missing):
+                    proc = subprocess.run(
+                        [sys.executable, str(PARITY), "--json", str(path), *args],
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(proc.returncode, code, proc.stdout + proc.stderr)
+                    self.assertTrue((proc.stdout if code == 0 else proc.stderr).startswith("usage:"))
+                self.assertEqual(existing.read_text(), PREVIOUS_REPORT)
+                self.assertFalse(missing.exists())
+
+    def test_run_that_writes_no_report_keeps_an_existing_file(self):
+        # A copy of the gate over an empty fixtures/ directory stops at
+        # "no fixtures found", before any verifier runs.
+        with tempfile.TemporaryDirectory() as tmp:
+            gate = Path(tmp) / "suite" / "scripts" / "parity" / "parity.py"
+            gate.parent.mkdir(parents=True)
+            shutil.copy(PARITY, gate)
+            (Path(tmp) / "suite" / "fixtures").mkdir()
+            existing, created = Path(tmp) / "existing.json", Path(tmp) / "created.json"
+            existing.write_text(PREVIOUS_REPORT)
+            for path in (existing, created):
+                proc = subprocess.run(
+                    [sys.executable, str(gate), "--json", str(path)], capture_output=True, text=True
+                )
+                self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+                self.assertEqual(proc.stderr, "[parity] no fixtures found\n")
+            self.assertEqual(existing.read_text(), PREVIOUS_REPORT)
+            self.assertEqual(created.read_text(), "")
+
+    def test_report_replaces_the_content_of_the_last_json_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first, second = Path(tmp) / "first.json", Path(tmp) / "second.json"
+            for path in (first, second):
+                path.write_text(PREVIOUS_REPORT)
+            proc = subprocess.run(
+                [sys.executable, str(PARITY), "--json", str(first), "--json", str(second)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertEqual(first.read_text(), PREVIOUS_REPORT)
+            self.assertTrue(json.loads(second.read_text())["agree"])
+
+    def test_report_to_a_pipe_is_written_without_truncating_it(self):
+        read_end, write_end = os.pipe()
+        with open(read_end, encoding="utf-8") as reader:
+            parity.write_report(open(write_end, "a", encoding="utf-8"), "report\n")
+            self.assertEqual(reader.read(), "report\n")
 
 
 class ErrorReasonTests(unittest.TestCase):

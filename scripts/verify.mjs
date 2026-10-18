@@ -16,10 +16,11 @@
 // Directories are walked recursively for *.json fixtures. --help (or -h)
 // prints the usage on stdout. Any other argument that starts with "-", other
 // than "-" alone, is an unknown option, never a fixture path; every argument
-// after "--" is a path.
+// after "--" is a path. An empty argument is a usage error, not the current
+// directory.
 // Exit code: 0 if every fixture's expected verdict (and reject category,
-// when pinned) is met, else 1; 2 for a usage error (no path, or an unknown
-// option).
+// when pinned) is met, else 1; 2 for a usage error (no path, an empty
+// argument, or an unknown option).
 
 import { lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
@@ -935,6 +936,13 @@ function main() {
   const pathArgs = args.filter((_, i) => i !== end);
   if (pathArgs.length === 0) {
     console.error(USAGE);
+    process.exit(2);
+  }
+  // An empty argument, as an unset shell variable gives in "$FIXTURE", names no
+  // file, and resolve() would read it as the current directory and walk it.
+  if (pathArgs.includes("")) {
+    console.error(USAGE);
+    console.error("verify.mjs: an empty argument is not a path");
     process.exit(2);
   }
 

@@ -1012,6 +1012,41 @@ test("an argument after -- that starts with - is a fixture path in both verifier
   }
 });
 
+// An empty argument, as an unset shell variable gives in "$FIXTURE", names no
+// file. Alone, before or after a fixture path, or after "--", it is a usage
+// error, no fixture is read, and the current directory is not walked for *.json
+// files. Each run starts in a directory holding a fixture both verifiers pass,
+// so a verifier that walks it exits 0.
+test("an empty argument is a usage error in both verifiers, not the current directory", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "verify-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, "valid.json"), readFileSync(LEVEL_0));
+  for (const [name, argv] of Object.entries(VERIFIERS)) {
+    for (const args of [[""], [LEVEL_0, ""], ["", LEVEL_0], ["--", ""]]) {
+      const label = `${name} ${JSON.stringify(args)}`;
+      const result = runVerifierArgs(argv, args, { cwd: dir });
+      assert.equal(result.status, 2, `${label}: ${result.stdout}${result.stderr}`);
+      assert.equal(result.stdout, "", label);
+      assert.equal(result.stderr, `${USAGE[name]}\n${PROGRAM[name]}: an empty argument is not a path\n`, label);
+    }
+  }
+});
+
+// The options are read before the paths are checked, so an option decides
+// whether it stands before or after an empty argument.
+test("an option decides before an empty argument is checked in both verifiers", () => {
+  for (const [name, argv] of Object.entries(VERIFIERS)) {
+    const help = runVerifierArgs(argv, ["", "--help"]);
+    assert.equal(help.status, 0, `${name}: ${help.stdout}${help.stderr}`);
+    assert.equal(help.stderr, "", name);
+    assert.ok(help.stdout.startsWith(`${USAGE[name]}\n`), `${name}: ${help.stdout}`);
+    const unknown = runVerifierArgs(argv, ["--verbose", ""]);
+    assert.equal(unknown.status, 2, `${name}: ${unknown.stdout}${unknown.stderr}`);
+    assert.equal(unknown.stdout, "", name);
+    assert.equal(unknown.stderr, `${USAGE[name]}\n${PROGRAM[name]}: unknown option: --verbose\n`, name);
+  }
+});
+
 // A path that cannot be stat'ed or read, or a directory that cannot be listed,
 // is an ERROR entry whose message names it, and the run goes on to the summary
 // line: never an uncaught exception, and never a run that skips the entry and
