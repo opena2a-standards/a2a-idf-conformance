@@ -13,14 +13,21 @@ it with `cryptography` into a virtual environment of its own and runs its
 console script, which runs the parity gate from the copy of the suite inside
 the package. These tests build the wheel from this checkout and install it into
 a scratch virtual environment, so besides Node they need `python3` with the
-`venv` module and network access to PyPI, for the build backend and
+`venv` module and network access to PyPI, for the build backend, `build` and
 `cryptography`.
+
+The package's description is `README.md` with its relative links made absolute
+by the metadata hook in `hatch_build.py`, which the tests here exercise
+directly and through the wheel's METADATA.
 """
 from __future__ import annotations
 
+import email
 import hashlib
+import importlib.util
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -48,6 +55,10 @@ ENTRY_POINT = f"pipx run --spec git+{REPOSITORY} {SCRIPT}"
 # Where the wheel carries the suite, in the repository's layout.
 SUITE = f"{PACKAGE}/suite/"
 SUITE_SCRIPTS = ("scripts/verify.mjs", "scripts/verify.py", "scripts/parity/parity.py")
+HATCH_BUILD = REPO_ROOT / "hatch_build.py"
+# Where a relative link of README.md points after the hook's rewrite.
+BLOB = f"{REPOSITORY}/blob/main/"
+TREE = f"{REPOSITORY}/tree/main/"
 
 BIN = "Scripts" if os.name == "nt" else "bin"
 EXE = ".exe" if os.name == "nt" else ""
@@ -101,6 +112,49 @@ def checked(proc: subprocess.CompletedProcess, what: str) -> subprocess.Complete
     return proc
 
 
+def load_hatch_build():
+    """The metadata hook module, imported from its path: it is a build script,
+    not a package."""
+    spec = importlib.util.spec_from_file_location("hatch_build", HATCH_BUILD)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# `](target` with an optional `<`: the targets of a Markdown text's inline
+# links, read independently of the hook's own pattern.
+LINK_TARGET = re.compile(r"\]\(\s*<?([^)\s>]+)")
+URL_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*:", re.IGNORECASE)
+
+
+def link_targets(markdown: str) -> list[str]:
+    return LINK_TARGET.findall(markdown)
+
+
+def relative_targets(markdown: str) -> list[str]:
+    """The link targets with no URL scheme that are not same-page fragments."""
+    return [t for t in link_targets(markdown) if not URL_SCHEME.match(t) and not t.startswith("#")]
+
+
+def wheel_metadata(path: Path):
+    """The parsed METADATA of a wheel; its payload is the description."""
+    with zipfile.ZipFile(path) as wheel:
+        name = next(n for n in wheel.namelist() if n.endswith(".dist-info/METADATA"))
+        return email.message_from_string(wheel.read(name).decode("utf-8"))
+
+
+def wheel_files(path: Path) -> dict[str, str]:
+    """{entry: sha256} for each file of a wheel other than the `WHEEL` entry,
+    which records the builder's version, and `RECORD`, which records the
+    hashes."""
+    with zipfile.ZipFile(path) as wheel:
+        return {
+            name: hashlib.sha256(wheel.read(name)).hexdigest()
+            for name in wheel.namelist()
+            if not name.endswith((".dist-info/WHEEL", ".dist-info/RECORD"))
+        }
+
+
 class ReadmeAndMetadataTests(unittest.TestCase):
     def test_readme_first_command_is_the_entry_point(self):
         self.assertEqual(first_bash_block(README.read_text(encoding="utf-8")), [ENTRY_POINT])
@@ -111,6 +165,69 @@ class ReadmeAndMetadataTests(unittest.TestCase):
         self.assertEqual(project["scripts"], {SCRIPT: f"{PACKAGE}:main"})
         self.assertEqual(project["urls"]["Repository"], REPOSITORY)
         self.assertIn("cryptography", " ".join(project["dependencies"]))
+
+    @unittest.skipIf(tomllib is None, "reading pyproject.toml needs tomllib (Python 3.11)")
+    def test_pyproject_has_the_readme_hook_set_the_description(self):
+        config = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+        self.assertEqual(config["project"]["dynamic"], ["readme"])
+        self.assertNotIn("readme", config["project"])
+        self.assertEqual(config["tool"]["hatch"]["metadata"]["hooks"], {"custom": {"path": "hatch_build.py"}})
+        self.assertTrue(HATCH_BUILD.is_file())
+
+
+class ReadmeLinkRewriteTests(unittest.TestCase):
+    """`absolute_links()` in hatch_build.py, which the build runs on README.md
+    to set the package's description."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.hook = load_hatch_build()
+
+    def rewrite(self, markdown: str) -> str:
+        return self.hook.absolute_links(markdown, REPO_ROOT, REPOSITORY)
+
+    def test_relative_link_points_at_the_file_or_directory_on_github(self):
+        cases = {
+            "[c](./docs/coverage.md#status)": f"[c]({BLOB}docs/coverage.md#status)",
+            "[v](./vectors/)": f"[v]({TREE}vectors/)",
+            "[s](scripts/README.md)": f"[s]({BLOB}scripts/README.md)",
+            '[l](./LICENSE "License")': f'[l]({BLOB}LICENSE "License")',
+            "[l](<./LICENSE>)": f"[l](<{BLOB}LICENSE>)",
+            # Not in the checkout: rewritten all the same, the build goes on.
+            "[x](./no-such-file.md)": f"[x]({BLOB}no-such-file.md)",
+        }
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                self.assertEqual(self.rewrite(source), expected)
+
+    def test_absolute_links_fragments_and_fenced_code_are_left_as_they_are(self):
+        kept = [
+            "[a](https://example.com/docs/coverage.md) [b](#status) [m](mailto:maintainers@example.com)",
+            "```",
+            "[c](./docs/coverage.md)",
+            "```",
+            "~~~bash",
+            "echo '[d](./docs/coverage.md)'",
+            "~~~",
+        ]
+        text = "\n".join([*kept, "[e](./docs/coverage.md)"])
+        self.assertEqual(self.rewrite(text), "\n".join([*kept, f"[e]({BLOB}docs/coverage.md)"]))
+
+    def test_every_readme_link_is_absolute_and_in_the_checkout_after_the_rewrite(self):
+        readme = README.read_text(encoding="utf-8")
+        self.assertTrue(relative_targets(readme), "README.md has no relative link to rewrite")
+        rewritten = self.rewrite(readme)
+        self.assertEqual(relative_targets(rewritten), [])
+        self.assertEqual(len(link_targets(rewritten)), len(link_targets(readme)))
+        for target in link_targets(rewritten):
+            if not target.startswith(REPOSITORY + "/"):
+                continue
+            with self.subTest(target=target):
+                kind, _, rest = target[len(REPOSITORY) + 1 :].partition("/")
+                self.assertIn(kind, ("blob", "tree"))
+                self.assertTrue(rest.startswith("main/"), target)
+                path = REPO_ROOT / rest[len("main/") :].partition("#")[0]
+                self.assertTrue(path.is_dir() if kind == "tree" else path.is_file(), target)
 
 
 class InstalledPackageTests(unittest.TestCase):
@@ -159,6 +276,39 @@ class InstalledPackageTests(unittest.TestCase):
             {SUITE + path for path in SUITE_SCRIPTS},
         )
         self.assertEqual([n for n in names if "__pycache__" in n], [])
+
+    def test_wheel_description_is_the_readme_with_absolute_links(self):
+        metadata = wheel_metadata(self.wheel)
+        self.assertEqual(metadata["Description-Content-Type"], "text/markdown")
+        description = metadata.get_payload()
+        readme = README.read_text(encoding="utf-8")
+        expected = load_hatch_build().absolute_links(readme, REPO_ROOT, REPOSITORY)
+        self.assertEqual(description.strip(), expected.strip())
+        self.assertEqual(relative_targets(description), [])
+        self.assertIn(f"]({BLOB}docs/coverage.md#status)", description)
+
+    def test_sdist_rebuilds_the_wheel(self):
+        """`python3 -m build` builds the sdist first and the wheel from the
+        sdist, and a release uploads both, so the sdist must carry what the
+        wheel build reads: the suite, README.md and hatch_build.py."""
+        scratch = Path(self._scratch.name)
+        pip = [str(self.python), "-m", "pip", "--disable-pip-version-check", "-q"]
+        checked(run([*pip, "install", "build", "hatchling>=1.27"]), "pip install build hatchling")
+        sdists = scratch / "sdist"
+        checked(
+            run([str(self.python), "-m", "build", "--sdist", "--no-isolation", "--outdir", str(sdists), str(REPO_ROOT)]),
+            "python -m build --sdist",
+        )
+        archives = sorted(sdists.glob("*.tar.gz"))
+        self.assertEqual(len(archives), 1, archives)
+        rebuilt = scratch / "rebuilt"
+        checked(
+            run([*pip, "wheel", "--no-deps", "--no-build-isolation", "--wheel-dir", str(rebuilt), str(archives[0])]),
+            "pip wheel from the sdist",
+        )
+        wheels = sorted(rebuilt.glob("*.whl"))
+        self.assertEqual(len(wheels), 1, wheels)
+        self.assertEqual(wheel_files(wheels[0]), wheel_files(self.wheel))
 
     def test_suite_root_is_the_installed_copy(self):
         proc = checked(

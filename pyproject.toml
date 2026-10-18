@@ -6,17 +6,25 @@ build-backend = "hatchling.build"
 name = "a2a-idf-conformance"
 version = "0.1.0"
 description = "Conformance suite for the A2A-IDF (Agent-to-Agent Identity Framework) specification: byte-pinned fixtures, two reference verifiers and the cross-implementation parity gate"
-readme = "README.md"
 requires-python = ">=3.9"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = ["cryptography>=42.0.0"]
+# The description is README.md with its relative links made absolute by the
+# metadata hook below: PyPI's renderer leaves a relative link as it is, so on
+# the project page `./docs/coverage.md` would point under pypi.org.
+dynamic = ["readme"]
 
 [project.urls]
 Repository = "https://github.com/opena2a-standards/a2a-idf-conformance"
 
 [project.scripts]
 a2a-idf-conformance = "a2a_idf_conformance:main"
+
+# hatch_build.py sets `readme`: README.md with each relative link rewritten to
+# the file on GitHub (`blob/main/` for a file, `tree/main/` for a directory).
+[tool.hatch.metadata.hooks.custom]
+path = "hatch_build.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/a2a_idf_conformance"]

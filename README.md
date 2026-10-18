@@ -62,6 +62,7 @@ schemas/           JSON Schemas for the composition and level fixture families
 scripts/           Reference verifiers, parity gate, deterministic fixture generator, profile generator
 src/               The `a2a-idf-conformance` console script, which runs the parity gate from an installed copy of the suite
 pyproject.toml     Package definition; the wheel carries the fixtures, schemas, vectors, MANIFEST.sha256, both verifiers and the gate
+hatch_build.py     Build hook; the package's description is this README with each relative link rewritten to its URL on GitHub
 MANIFEST.sha256    SHA-256 byte-pin over every fixture and vector (generator-emitted, CI-verified)
 conformance.json   Machine-readable conformance profile (derived from the fixtures, CI-verified)
 COSIGNERS.md       Second-party cosignature registry over MANIFEST.sha256
