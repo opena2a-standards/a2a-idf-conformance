@@ -907,6 +907,111 @@ test("a fixture path that does not exist is reported as ERROR by both verifiers"
   }
 });
 
+// An argument that starts with "-" is an option, never a fixture path, unless it
+// is "-" alone or comes after "--". Options are read left to right before any
+// fixture is read, and the first one met decides: --help and -h print the usage
+// on stdout (exit 0), and any other option is a usage error (exit 2).
+const USAGE = {
+  node: "usage: node verify.mjs <fixture.json | directory> [...]",
+  python: "usage: python3 verify.py <fixture.json | directory> [...]",
+};
+const PROGRAM = { node: "verify.mjs", python: "verify.py" };
+const LEVEL_0 = join(REPO, "fixtures/levels/level-0-self-asserted.json");
+
+function runVerifierArgs([command, ...args], argv, options = {}) {
+  return spawnSync(command, [...args, ...argv], { encoding: "utf8", ...options });
+}
+
+for (const option of ["--help", "-h"]) {
+  test(`${option} prints the usage on stdout and exits 0 in both verifiers`, () => {
+    for (const [name, argv] of Object.entries(VERIFIERS)) {
+      const result = runVerifierArgs(argv, [option]);
+      assert.equal(result.status, 0, `${name}: ${result.stdout}${result.stderr}`);
+      assert.equal(result.stderr, "", name);
+      assert.deepEqual(
+        result.stdout.split("\n"),
+        [
+          USAGE[name],
+          "Directories are walked recursively for *.json fixtures.",
+          "Exit code: 0 when every fixture meets its pinned outcome, 1 otherwise, 2 for a usage error.",
+          "",
+        ],
+        name,
+      );
+    }
+  });
+}
+
+test("an unknown option is a usage error in both verifiers, not a fixture path", () => {
+  for (const [name, argv] of Object.entries(VERIFIERS)) {
+    const result = runVerifierArgs(argv, ["--verbose"]);
+    assert.equal(result.status, 2, `${name}: ${result.stdout}${result.stderr}`);
+    assert.equal(result.stdout, "", name);
+    assert.equal(result.stderr, `${USAGE[name]}\n${PROGRAM[name]}: unknown option: --verbose\n`, name);
+  }
+});
+
+// The unknown option line quotes the argument as a report line quotes a fixture
+// value: a control character is written as a \uXXXX escape.
+test("an unknown option is quoted with its control characters escaped by both verifiers", () => {
+  for (const [name, argv] of Object.entries(VERIFIERS)) {
+    const result = runVerifierArgs(argv, ["-\u001b[2J"]);
+    assert.equal(result.status, 2, `${name}: ${result.stdout}${result.stderr}`);
+    assert.equal(result.stdout, "", name);
+    assert.equal(result.stderr, `${USAGE[name]}\n${PROGRAM[name]}: unknown option: -\\u001b[2J\n`, name);
+  }
+});
+
+test("the first option met decides in both verifiers, before any fixture is read", () => {
+  for (const [name, argv] of Object.entries(VERIFIERS)) {
+    const unknown = runVerifierArgs(argv, [LEVEL_0, "--verbose", "--help"]);
+    assert.equal(unknown.status, 2, `${name}: ${unknown.stdout}${unknown.stderr}`);
+    assert.equal(unknown.stdout, "", name);
+    assert.equal(unknown.stderr, `${USAGE[name]}\n${PROGRAM[name]}: unknown option: --verbose\n`, name);
+    const help = runVerifierArgs(argv, [LEVEL_0, "-h", "--verbose"]);
+    assert.equal(help.status, 0, `${name}: ${help.stdout}${help.stderr}`);
+    assert.equal(help.stderr, "", name);
+    assert.ok(help.stdout.startsWith(`${USAGE[name]}\n`), `${name}: ${help.stdout}`);
+    assert.doesNotMatch(help.stdout, /^(PASS|summary:)/m, name);
+  }
+});
+
+// "--" alone names no fixture, so it is the usage error that no argument is.
+test("-- ends the options in both verifiers", () => {
+  for (const [name, argv] of Object.entries(VERIFIERS)) {
+    const result = runVerifierArgs(argv, ["--", LEVEL_0]);
+    assert.equal(result.status, 0, `${name}: ${result.stdout}${result.stderr}`);
+    assert.deepEqual(
+      result.stdout.split("\n"),
+      [`PASS  ${LEVEL_0}`, "      observed: ACCEPT", "summary: 1 pass, 0 fail (1 fixtures)", ""],
+      name,
+    );
+    const empty = runVerifierArgs(argv, ["--"]);
+    assert.equal(empty.status, 2, `${name}: ${empty.stdout}${empty.stderr}`);
+    assert.equal(empty.stdout, "", name);
+    assert.equal(empty.stderr, `${USAGE[name]}\n`, name);
+  }
+});
+
+test("an argument after -- that starts with - is a fixture path in both verifiers, and so is - alone", (t) => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "verify-")));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, "--help"), readFileSync(LEVEL_0));
+  writeFileSync(join(dir, "-"), readFileSync(LEVEL_0));
+  for (const [name, argv] of Object.entries(VERIFIERS)) {
+    for (const args of [["--", "--help"], ["-"]]) {
+      const label = `${name} ${args.join(" ")}`;
+      const result = runVerifierArgs(argv, args, { cwd: dir });
+      assert.equal(result.status, 0, `${label}: ${result.stdout}${result.stderr}`);
+      assert.deepEqual(
+        result.stdout.split("\n"),
+        [`PASS  ${join(dir, args.at(-1))}`, "      observed: ACCEPT", "summary: 1 pass, 0 fail (1 fixtures)", ""],
+        label,
+      );
+    }
+  }
+});
+
 // A path that cannot be stat'ed or read, or a directory that cannot be listed,
 // is an ERROR entry whose message names it, and the run goes on to the summary
 // line: never an uncaught exception, and never a run that skips the entry and

@@ -41,6 +41,8 @@ pipx builds the package that [`pyproject.toml`](../pyproject.toml) defines from 
 
 Both verifiers accept fixture files or directories (walked recursively for `*.json`). A symlink to a directory met during the walk is not followed, so a fixture is not listed a second time under another name; a symlink to a fixture file is read, and a directory named on the command line is walked when it is a symlink. A `*.json` entry met during the walk that is neither a regular file nor a directory (a socket, a FIFO, a device) is reported as `ERROR` (`not a regular file`) and not read, so a FIFO cannot hold the run until a writer opens it.
 
+`--help` or `-h` prints the usage and the exit codes on stdout and exits 0 without reading a fixture; any other argument that starts with `-`, other than `-` alone, is an unknown option, reported on stderr with exit code 2 and never read as a path; and every argument after `--` is a path, even one that starts with `-`.
+
 ## Output
 
 Each verifier prints one block per fixture:
