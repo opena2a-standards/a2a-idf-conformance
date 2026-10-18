@@ -194,8 +194,13 @@ def outcome_str(record: dict | None) -> str:
     return record["verdict"]
 
 
-def main() -> int:
+def main(prog: str | None = None) -> int:
+    """Run the gate with the arguments on the command line; return its exit code.
+
+    `prog` is the program name the usage and error lines give. None leaves
+    argparse's default, `parity.py` when this file is run as a script."""
     ap = argparse.ArgumentParser(
+        prog=prog,
         description="Run the reference verifiers and any implementation under test over the "
         "fixture set; fail on any disagreement with each other or with the pinned outcomes."
     )
