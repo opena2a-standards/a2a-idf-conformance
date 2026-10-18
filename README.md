@@ -6,18 +6,15 @@ The suite is intentionally narrow: it covers the identity-framework layer (verif
 
 ## Testing an implementation
 
-Run the parity gate from a clone of the suite.
+Run the parity gate with one command. It needs [pipx](https://pipx.pypa.io/) and `node` on the `PATH` ([Node version](./scripts/README.md#install)):
 
 ```bash
-git clone https://github.com/opena2a-standards/a2a-idf-conformance
-cd a2a-idf-conformance
-python3 -m venv .venv
-. .venv/bin/activate
-python3 -m pip install cryptography
-python3 scripts/parity/parity.py
+pipx run --spec git+https://github.com/opena2a-standards/a2a-idf-conformance a2a-idf-conformance
 ```
 
-What `python3 scripts/parity/parity.py` prints, trimmed ([full output](./docs/captures/parity.txt)):
+pipx fetches the suite from this repository, installs it with `cryptography`, the Python verifier's one dependency, into a virtual environment of its own, and runs the gate from that copy; nothing is cloned or written into the current directory. A later run reuses that environment, so after a fixture lands, `pipx run --no-cache --spec git+https://github.com/opena2a-standards/a2a-idf-conformance a2a-idf-conformance` fetches the suite again. Without `node` on the `PATH`, the gate reports `node verifier could not start` and exits 1.
+
+What `pipx run --spec git+https://github.com/opena2a-standards/a2a-idf-conformance a2a-idf-conformance` prints, trimmed ([full output](./docs/captures/parity.txt)):
 
 ```
 ...
@@ -31,17 +28,28 @@ PARITY: PASS (all implementations agree on gate, verdict, and category, and matc
 
 The gate runs every fixture through the Node and Python reference verifiers and passes only when both agree with each other and with the outcome pinned in each fixture.
 
-The `venv` line creates a virtual environment in `.venv` and the next line activates it in the current shell, so the `pip` line downloads `cryptography`, the Python verifier's one dependency, and installs it into that environment.
-
-Outside a virtual environment, a Python marked as externally managed (PEP 668), such as Homebrew Python, refuses the `pip` line with `error: externally-managed-environment` ([other install options](./scripts/README.md#install)).
-
 Wrap your implementation in a command that takes a fixtures directory, evaluates every `*.json` fixture under it, and prints the reference verifier output format (`PASS|FAIL|ERROR <path>`, then `observed: ACCEPT` or `observed: REJECT[CATEGORY]`). Then add it to the parity gate:
 
 ```bash
-python3 scripts/parity/parity.py --verifier mylib="node ../mylib/conformance.js"
+pipx run --spec git+https://github.com/opena2a-standards/a2a-idf-conformance a2a-idf-conformance --verifier mylib="node ../mylib/conformance.js"
 ```
 
 The gate runs it beside both reference verifiers and reports `PARITY: PASS` only when every implementation agrees on every fixture and matches the outcome pinned in the fixture; otherwise it reports `PARITY: FAIL` and exits 1. The full input and output contract is in [`scripts/README.md`](./scripts/README.md#testing-another-implementation).
+
+To change the suite, for example to add a fixture or to run the tooling tests, run the gate from a clone:
+
+```bash
+git clone https://github.com/opena2a-standards/a2a-idf-conformance
+cd a2a-idf-conformance
+python3 -m venv .venv
+. .venv/bin/activate
+python3 -m pip install cryptography
+python3 scripts/parity/parity.py
+```
+
+The `venv` line creates a virtual environment in `.venv` and the next line activates it in the current shell, so the `pip` line downloads `cryptography`, the Python verifier's one dependency, and installs it into that environment.
+
+Outside a virtual environment, a Python marked as externally managed (PEP 668), such as Homebrew Python, refuses the `pip` line with `error: externally-managed-environment` ([other install options](./scripts/README.md#install)).
 
 ## Layout
 
@@ -52,6 +60,9 @@ fixtures/
 vectors/           Pinned test vectors (Ed25519 keypairs per RFC 8032 §7.1)
 schemas/           JSON Schemas for the composition and level fixture families
 scripts/           Reference verifiers, parity gate, deterministic fixture generator, profile generator
+src/               The `a2a-idf-conformance` console script, which runs the parity gate from an installed copy of the suite
+pyproject.toml     Package definition; the wheel carries the fixtures, schemas, vectors, MANIFEST.sha256, both verifiers and the gate
+hatch_build.py     Build hook; the package's description is this README with each relative link rewritten to its URL on GitHub
 MANIFEST.sha256    SHA-256 byte-pin over every fixture and vector (generator-emitted, CI-verified)
 conformance.json   Machine-readable conformance profile (derived from the fixtures, CI-verified)
 COSIGNERS.md       Second-party cosignature registry over MANIFEST.sha256
@@ -88,7 +99,7 @@ The keypairs in [`vectors/`](./vectors/) are the RFC 8032 §7.1 Test 1 and Test 
 ## Documentation
 
 - [Coverage](./docs/coverage.md): what each fixture family pins, the adjacent conformance suites, and where the contributed snapshots come from
-- [Reference verifiers and suite tooling](./scripts/README.md): install, output format, and the contract for testing another implementation
+- [Reference verifiers and suite tooling](./scripts/README.md): install, the published entry point, output format, and the contract for testing another implementation
 - [Verification-level fixtures](./fixtures/levels/README.md): fixture shape, check order and provider domain
 - [Composition fixtures](./fixtures/composition/README.md) and the [composition fixture schema](./fixtures/composition/SCHEMA.md)
 - [Test vectors](./vectors/README.md): the RFC 8032 keypairs the fixtures use

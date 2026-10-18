@@ -6,9 +6,10 @@ Run from the repository root:
 
 `docs/captures/parity.txt` is what `python3 scripts/parity/parity.py` prints
 for the committed fixture set, and `docs/captures/parity.json` is the `--json`
-report of the same run. The README shows a trimmed excerpt and links the full
-output. After a change to the gate's output, refresh both files from the
-repository root with:
+report of the same run. The README shows a trimmed excerpt, labelled with its
+first command (the published entry point, which runs the same gate from the
+installed copy of the suite), and links the full output. After a change to the
+gate's output, refresh both files from the repository root with:
 
     python3 scripts/parity/parity.py --json docs/captures/parity.json > docs/captures/parity.txt
 
@@ -31,7 +32,10 @@ CAPTURE_TXT = REPO_ROOT / "docs" / "captures" / "parity.txt"
 CAPTURE_JSON = REPO_ROOT / "docs" / "captures" / "parity.json"
 
 COMMAND = "python3 scripts/parity/parity.py"
-LABEL = f"What `{COMMAND}` prints, trimmed ([full output](./docs/captures/parity.txt)):"
+# The README's first command. It runs the same gate from the installed copy of
+# the suite, so it prints the same lines (test_entry_point.py checks that).
+ENTRY_POINT = "pipx run --spec git+https://github.com/opena2a-standards/a2a-idf-conformance a2a-idf-conformance"
+LABEL = f"What `{ENTRY_POINT}` prints, trimmed ([full output](./docs/captures/parity.txt)):"
 ELISION = "..."
 REFRESH = f"{COMMAND} --json docs/captures/parity.json > docs/captures/parity.txt"
 

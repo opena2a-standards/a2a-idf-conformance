@@ -6,6 +6,12 @@ __pycache__/
 .venv/
 venv/
 
+# Python packaging output (`pip wheel .`, `python3 -m build`)
+build/
+dist/
+*.egg-info/
+*.whl
+
 # Node
 node_modules/
 
