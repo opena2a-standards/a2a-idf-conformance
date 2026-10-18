@@ -10,6 +10,7 @@ the Python `cryptography` package, like the parity gate itself.
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import shutil
 import subprocess
@@ -68,6 +69,19 @@ records = parity.parse_output(f"PASS  {path}   \n      observed: ACCEPT\n")
 print(records == {path: {"gate": "PASS", "verdict": "ACCEPT", "category": None}})
 '''
 
+# An implementation under test that prints 25 ERROR blocks on stdout and 400
+# numbered lines on stderr, then exits 1.
+NOISY_STUB = r'''
+import sys
+
+for i in range(25):
+    print(f"ERROR {sys.argv[1]}/levels/e{i:02}.json")
+    print(f"      reason {i}")
+for i in range(400):
+    print(f"stderr line {i:03}", file=sys.stderr)
+sys.exit(1)
+'''
+
 
 def run_parity(*args: str, cwd: Path) -> tuple[subprocess.CompletedProcess, dict | None]:
     report = cwd / "parity-report.json"
@@ -79,7 +93,10 @@ def run_parity(*args: str, cwd: Path) -> tuple[subprocess.CompletedProcess, dict
         capture_output=True,
         text=True,
     )
-    data = json.loads(report.read_text()) if report.exists() else None
+    # The gate opens the report file when it reads `--json`, so a run that
+    # ends before the report is written (a usage error) leaves the file empty.
+    text = report.read_text() if report.exists() else ""
+    data = json.loads(text) if text else None
     return proc, data
 
 
@@ -115,9 +132,24 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(
             records,
             {
-                "levels/x.json": {"gate": "ERROR", "verdict": None, "category": None},
+                "levels/x.json": {
+                    "gate": "ERROR",
+                    "verdict": None,
+                    "category": None,
+                    "reason": "value type outside the fixture JCS domain: int",
+                },
                 "levels/y.json": {"gate": "PASS", "verdict": "ACCEPT", "category": None},
             },
+        )
+
+    def test_error_block_without_an_indented_line_has_no_reason(self):
+        records = parity.parse_output(
+            "ERROR /repo/fixtures/levels/x.json\n"
+            "summary: 0 pass, 1 fail (1 fixtures)\n"
+        )
+        self.assertEqual(
+            records,
+            {"levels/x.json": {"gate": "ERROR", "verdict": None, "category": None, "reason": None}},
         )
 
     def test_fixture_text_in_a_node_stack_trace_does_not_open_a_line(self):
@@ -132,14 +164,17 @@ class ParseTests(unittest.TestCase):
         source = FIXTURES_DIR / "composition" / "aim-did-rfc9421" / "bilateral-receipt.json"
         component = json.loads(source.read_text())
         component["signatureParams"]["components"].append(f"x{injected}")
+        # Each case: the fixture bytes, text the trace must quote, and how the
+        # reason the gate keeps from the ERROR block begins.
         cases = {
             "composition/split-trace.json": (
                 json.dumps(component).encode(),
                 "Error: unsupported component: x\\u000a      observed: ACCEPT\\u000aPASS  ",
+                "Error: unsupported component: x",
             ),
-            "levels/split-trace.json": (b"[\nobserved: ACCEPT", "SyntaxError"),
+            "levels/split-trace.json": (b"[\nobserved: ACCEPT", "SyntaxError", "SyntaxError"),
         }
-        for key, (text, quoted) in cases.items():
+        for key, (text, quoted, reason_start) in cases.items():
             with self.subTest(fixture=key), tempfile.TemporaryDirectory() as tmp:
                 fixture = Path(tmp) / "fixtures" / key
                 fixture.parent.mkdir(parents=True)
@@ -150,9 +185,12 @@ class ParseTests(unittest.TestCase):
                     text=True,
                 )
                 self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+                records = parity.parse_output(proc.stdout)
+                reason = (records.get(key) or {}).get("reason") or ""
+                self.assertTrue(reason.startswith(reason_start), proc.stdout)
                 self.assertEqual(
-                    parity.parse_output(proc.stdout),
-                    {key: {"gate": "ERROR", "verdict": None, "category": None}},
+                    records,
+                    {key: {"gate": "ERROR", "verdict": None, "category": None, "reason": reason}},
                     proc.stdout,
                 )
                 self.assertIn(quoted, proc.stdout)
@@ -370,6 +408,138 @@ class VerifierOptionTests(unittest.TestCase):
                 proc, report = run_parity("--verifier", spec, cwd=self.tmp)
                 self.assertEqual(proc.returncode, 2, proc.stderr)
                 self.assertIsNone(report)
+
+
+class JsonReportPathTests(unittest.TestCase):
+    """A `--json` path that cannot be written is refused before any verifier runs."""
+
+    def assert_refused(self, path: Path, shown: str) -> None:
+        with self.assertRaises(OSError) as raised:
+            open(path, "w", encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, str(PARITY), "--json", str(path)], capture_output=True, text=True
+        )
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+        # The gate did not run: not even its `parity:` line was printed.
+        self.assertEqual(proc.stdout, "")
+        last = proc.stderr.rstrip("\n").split("\n")[-1]
+        self.assertTrue(last.startswith("parity.py: error: argument --json:"), proc.stderr)
+        self.assertIn(shown, last)
+        self.assertIn(raised.exception.strerror, last)
+
+    def test_path_in_a_missing_directory_is_a_usage_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing"
+            self.assert_refused(missing / "r.json", "missing/r.json")
+            self.assertFalse(missing.exists())
+
+    def test_directory_is_a_usage_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assert_refused(Path(tmp), tmp)
+
+
+class ErrorReasonTests(unittest.TestCase):
+    """What the gate shows when a verifier reports ERROR or exits non-zero."""
+
+    @unittest.skipIf(
+        not hasattr(os, "geteuid") or os.geteuid() == 0,
+        "a file of mode 000 is unreadable only to a POSIX user other than root",
+    )
+    def test_unreadable_fixture_is_reported_with_each_verifier_reason(self):
+        # Runs a copy of the suite, so the mode change never touches fixtures/.
+        key = "levels/level-0-self-asserted.json"
+        with tempfile.TemporaryDirectory() as tmp:
+            # The verifiers print fixture paths with symbolic links resolved.
+            suite = Path(tmp).resolve() / "suite"
+            shutil.copytree(
+                SCRIPTS_DIR, suite / "scripts", ignore=shutil.ignore_patterns("__pycache__")
+            )
+            shutil.copytree(FIXTURES_DIR, suite / "fixtures")
+            shutil.copytree(SCRIPTS_DIR.parent / "schemas", suite / "schemas")
+            fixture = suite / "fixtures" / key
+            fixture.chmod(0o000)
+            try:
+                proc = subprocess.run(
+                    [
+                        sys.executable,
+                        str(suite / "scripts" / "parity" / "parity.py"),
+                        "--json",
+                        str(suite / "parity-report.json"),
+                    ],
+                    cwd=suite,
+                    capture_output=True,
+                    text=True,
+                )
+            finally:
+                # Restored so that the temporary directory can be removed.
+                fixture.chmod(0o644)
+            report = json.loads((suite / "parity-report.json").read_text())
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        stderr_lines = proc.stderr.split("\n")
+        for name in ("node", "python"):
+            with self.subTest(verifier=name):
+                prefix = f"  - {key}: {name} ERROR: "
+                bullets = [line for line in proc.stdout.split("\n") if line.startswith(prefix)]
+                self.assertEqual(len(bullets), 1, proc.stdout)
+                self.assertIn("permission denied", bullets[0][len(prefix):].lower())
+                self.assertIn(bullets[0][len("  - "):], report["divergences"])
+                self.assertTrue(report["fixtures"][key][name]["reason"])
+                self.assertIn(f"[parity] {name} ERROR blocks:", stderr_lines)
+        self.assertIn(f"ERROR {fixture}", stderr_lines)
+        # Each ERROR block is echoed whole, so no line under its header is cut.
+        self.assertTrue(proc.stderr.endswith("\n"), proc.stderr)
+        header = None
+        for line in stderr_lines[:-1]:
+            if line.startswith("[parity]"):
+                header = line
+            elif header is not None and header.endswith(" ERROR blocks:"):
+                self.assertTrue(line.startswith(("ERROR ", " " * 6)), f"{line!r} under {header!r}")
+
+    def test_verifier_that_prints_no_error_block_has_its_stdout_echoed(self):
+        # It exits non-zero with a diagnostic outside the block format and
+        # nothing on stderr.
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / "boom.py"
+            stub.write_text('print("boom")\nraise SystemExit(3)\n')
+            proc, report = run_parity(
+                "--verifier", "stub=" + shlex.join([sys.executable, str(stub)]), cwd=Path(tmp)
+            )
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("[parity] stub stdout (last lines):\nboom\n", proc.stderr)
+        self.assertIn("stub verifier exited 3 (expected 0)", report["divergences"])
+
+    def test_twenty_error_blocks_are_echoed_and_the_stderr_tail_starts_at_a_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / "noisy.py"
+            stub.write_text(NOISY_STUB)
+            proc, _ = run_parity(
+                "--verifier", "stub=" + shlex.join([sys.executable, str(stub)]), cwd=Path(tmp)
+            )
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        lines = proc.stderr.split("\n")
+        start = lines.index("[parity] stub ERROR blocks:") + 1
+        blocks = []
+        for i in range(20):
+            blocks += [f"ERROR {FIXTURES_DIR}/levels/e{i:02}.json", f"      reason {i}"]
+        self.assertEqual(lines[start : start + 41], [*blocks, "[parity] ... and 5 more"])
+        start = lines.index("[parity] stub stderr (last lines):") + 1
+        self.assertEqual(lines[-1], "", proc.stderr)
+        tail = lines[start:-1]
+        self.assertTrue(0 < len(tail) < 400, proc.stderr)
+        self.assertEqual(tail, [f"stderr line {i:03}" for i in range(400 - len(tail), 400)])
+        self.assertLessEqual(len("\n".join(tail).encode()), 2000)
+
+    def test_echoed_tail_is_the_lines_that_start_within_the_window(self):
+        size = parity.ECHO_TAIL_BYTES
+        self.assertEqual(parity.last_lines("a\nb\n\n"), "a\nb")
+        # The window starts at the start of a line, so that line is kept.
+        lines = "x" * (size // 2 - 1) + "\n" + "y" * (size // 2)
+        self.assertEqual(parity.last_lines(f"cut\n{lines}\n"), lines)
+        # One byte more, and the first of those lines starts before the window.
+        self.assertEqual(parity.last_lines(f"cut\nx{lines}\n"), "y" * (size // 2))
+        # A last line longer than the window is cut to it.
+        self.assertEqual(parity.last_lines("z" * (size + 5)), "z" * size)
 
 
 if __name__ == "__main__":
