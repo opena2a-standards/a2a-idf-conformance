@@ -118,6 +118,18 @@ def checked(proc: subprocess.CompletedProcess, what: str) -> subprocess.Complete
     return proc
 
 
+def assert_program_name(test: unittest.TestCase, cmd: list[str], prog: str, **kwargs) -> None:
+    """`cmd --help` prints `usage: <prog> [-h] ...`, and `cmd --bogus` exits 2
+    with the error line `<prog>: error: ...`: argparse names its program in both."""
+    shown = run([*cmd, "--help"], **kwargs)
+    test.assertEqual(shown.returncode, 0, shown.stdout + shown.stderr)
+    # argparse wraps a long usage line, so only its start is compared.
+    test.assertTrue(shown.stdout.startswith(f"usage: {prog} [-h]"), shown.stdout)
+    refused = run([*cmd, "--bogus"], **kwargs)
+    test.assertEqual(refused.returncode, 2, refused.stdout + refused.stderr)
+    test.assertEqual(refused.stderr.splitlines()[-1], f"{prog}: error: unrecognized arguments: --bogus")
+
+
 def load_hatch_build():
     """The metadata hook module, imported from its path: it is a build script,
     not a package."""
@@ -387,16 +399,25 @@ class InstalledPackageTests(unittest.TestCase):
             self.assertIn("\nPARITY: FAIL", proc.stdout)
             self.assertIn("levels/level-0-self-asserted.json: verdict divergence", proc.stdout)
 
+    def test_console_script_usage_and_errors_name_the_console_script(self):
+        assert_program_name(self, [str(self.script)], SCRIPT)
+
 
 class CheckoutTests(unittest.TestCase):
-    def test_module_runs_the_gate_of_the_checkout_without_an_install(self):
+    def setUp(self):
         src = str(REPO_ROOT / "src")
-        env = dict(os.environ)
-        env["PYTHONPATH"] = os.pathsep.join(p for p in (src, env.get("PYTHONPATH")) if p)
+        self.env = dict(os.environ)
+        self.env["PYTHONPATH"] = os.pathsep.join(p for p in (src, self.env.get("PYTHONPATH")) if p)
+
+    def test_module_runs_the_gate_of_the_checkout_without_an_install(self):
         with tempfile.TemporaryDirectory() as cwd:
-            proc = run([sys.executable, "-m", PACKAGE], cwd=cwd, env=env)
+            proc = run([sys.executable, "-m", PACKAGE], cwd=cwd, env=self.env)
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             self.assertEqual(proc.stdout, CAPTURE_TXT.read_text(encoding="utf-8"))
+
+    def test_module_usage_and_errors_name_the_interpreter_and_the_package(self):
+        prog = f"{Path(sys.executable).name} -m {PACKAGE}"
+        assert_program_name(self, [sys.executable, "-m", PACKAGE], prog, env=self.env)
 
 
 if __name__ == "__main__":
