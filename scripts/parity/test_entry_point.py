@@ -60,6 +60,11 @@ HATCH_BUILD = REPO_ROOT / "hatch_build.py"
 # Where a relative link of README.md points after the hook's rewrite.
 BLOB = f"{REPOSITORY}/blob/main/"
 TREE = f"{REPOSITORY}/tree/main/"
+# Where `--help` says the output format is documented: a URL, since an
+# installed copy of the suite carries no scripts/README.md. GitHub gives the
+# heading below the anchor `testing-another-implementation`.
+OUTPUT_FORMAT_URL = f"{BLOB}scripts/README.md#testing-another-implementation"
+OUTPUT_FORMAT_HEADING = "## Testing another implementation"
 # The core metadata version both artifacts write (`core-metadata-version` in
 # pyproject.toml). It carries every field the package sets, and twine 6.2.0
 # replaces packaging's list of valid metadata versions with one that ends at
@@ -128,6 +133,42 @@ def assert_program_name(test: unittest.TestCase, cmd: list[str], prog: str, **kw
     refused = run([*cmd, "--bogus"], **kwargs)
     test.assertEqual(refused.returncode, 2, refused.stdout + refused.stderr)
     test.assertEqual(refused.stderr.splitlines()[-1], f"{prog}: error: unrecognized arguments: --bogus")
+
+
+def assert_version(test: unittest.TestCase, cmd: list[str], version: str, **kwargs) -> None:
+    """`cmd --version`, `cmd -V` and `cmd version` each print
+    `a2a-idf-conformance <version>` and exit 0, and `cmd --help` lists the option."""
+    for arg in ("--version", "-V", "version"):
+        with test.subTest(arg=arg):
+            proc = run([*cmd, arg], **kwargs)
+            test.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, f"{SCRIPT} {version}\n", ""))
+    test.assertIn("  -V, --version ", run([*cmd, "--help"], **kwargs).stdout)
+
+
+def assert_help_gives_the_output_format_url(
+    test: unittest.TestCase, cmd: list[str], env: dict[str, str] | None = None
+) -> None:
+    """`cmd --help` in an 80-column terminal gives OUTPUT_FORMAT_URL whole, as
+    one word, and the checkout's scripts/README.md has the heading it names."""
+    env = dict(os.environ if env is None else env, COLUMNS="80")
+    shown = run([*cmd, "--help"], env=env)
+    test.assertEqual(shown.returncode, 0, shown.stdout + shown.stderr)
+    test.assertIn(OUTPUT_FORMAT_URL, shown.stdout.split())
+    readme = REPO_ROOT / "scripts" / "README.md"
+    test.assertIn(OUTPUT_FORMAT_HEADING, readme.read_text(encoding="utf-8").splitlines())
+
+
+def pyproject_version() -> str:
+    """`version` in pyproject.toml, read with tomllib (Python 3.11)."""
+    return tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]["version"]
+
+
+def load_package():
+    """The package's `__init__.py` in the checkout, imported from its path."""
+    spec = importlib.util.spec_from_file_location(PACKAGE, REPO_ROOT / "src" / PACKAGE / "__init__.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def load_hatch_build():
@@ -253,6 +294,28 @@ class ReadmeLinkRewriteTests(unittest.TestCase):
                 self.assertTrue(rest.startswith("main/"), target)
                 path = REPO_ROOT / rest[len("main/") :].partition("#")[0]
                 self.assertTrue(path.is_dir() if kind == "tree" else path.is_file(), target)
+
+
+class ProjectVersionTests(unittest.TestCase):
+    """`project_version()` in the package, which reads the version of a
+    checkout from its pyproject.toml without a TOML reader."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.package = load_package()
+
+    def test_version_is_read_from_the_project_table_only(self):
+        text = (
+            '[tool.other]\nversion = "9.9.9"\n\n'
+            '[project]\nname = "x"\nversion = "1.2.3"  # pinned\n\n'
+            '[project.urls]\nversion = "8.8.8"\n'
+        )
+        self.assertEqual(self.package.project_version(text), "1.2.3")
+
+    def test_text_without_a_project_version_is_refused(self):
+        text = '[tool.other]\nversion = "9.9.9"\n[project]\nname = "x"\n[project.urls]\nversion = "8.8.8"\n'
+        with self.assertRaises(LookupError):
+            self.package.project_version(text)
 
 
 class InstalledPackageTests(unittest.TestCase):
@@ -402,6 +465,15 @@ class InstalledPackageTests(unittest.TestCase):
     def test_console_script_usage_and_errors_name_the_console_script(self):
         assert_program_name(self, [str(self.script)], SCRIPT)
 
+    def test_console_script_prints_the_version_the_wheel_was_built_with(self):
+        version = wheel_metadata(self.wheel)["Version"]
+        if tomllib is not None:
+            self.assertEqual(version, pyproject_version())
+        assert_version(self, [str(self.script)], version)
+
+    def test_console_script_help_gives_the_output_format_url(self):
+        assert_help_gives_the_output_format_url(self, [str(self.script)])
+
 
 class CheckoutTests(unittest.TestCase):
     def setUp(self):
@@ -418,6 +490,13 @@ class CheckoutTests(unittest.TestCase):
     def test_module_usage_and_errors_name_the_interpreter_and_the_package(self):
         prog = f"{Path(sys.executable).name} -m {PACKAGE}"
         assert_program_name(self, [sys.executable, "-m", PACKAGE], prog, env=self.env)
+
+    @unittest.skipIf(tomllib is None, "reading pyproject.toml needs tomllib (Python 3.11)")
+    def test_module_prints_the_version_in_pyproject_toml(self):
+        assert_version(self, [sys.executable, "-m", PACKAGE], pyproject_version(), env=self.env)
+
+    def test_module_help_gives_the_output_format_url(self):
+        assert_help_gives_the_output_format_url(self, [sys.executable, "-m", PACKAGE], env=self.env)
 
 
 if __name__ == "__main__":
