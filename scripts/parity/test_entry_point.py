@@ -13,8 +13,8 @@ it with `cryptography` into a virtual environment of its own and runs its
 console script, which runs the parity gate from the copy of the suite inside
 the package. These tests build the wheel from this checkout and install it into
 a scratch virtual environment, so besides Node they need `python3` with the
-`venv` module and network access to PyPI, for the build backend, `build` and
-`cryptography`.
+`venv` module and network access to PyPI, for the build backend, `build`,
+`twine` and `cryptography`.
 
 The package's description is `README.md` with its relative links made absolute
 by the metadata hook in `hatch_build.py`, which the tests here exercise
@@ -31,6 +31,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 import zipfile
@@ -59,6 +60,11 @@ HATCH_BUILD = REPO_ROOT / "hatch_build.py"
 # Where a relative link of README.md points after the hook's rewrite.
 BLOB = f"{REPOSITORY}/blob/main/"
 TREE = f"{REPOSITORY}/tree/main/"
+# The core metadata version both artifacts write (`core-metadata-version` in
+# pyproject.toml). It carries every field the package sets, and twine 6.2.0
+# replaces packaging's list of valid metadata versions with one that ends at
+# 2.4, so it refuses a 2.5 artifact as not a valid metadata version.
+METADATA_VERSION = "2.4"
 
 BIN = "Scripts" if os.name == "nt" else "bin"
 EXE = ".exe" if os.name == "nt" else ""
@@ -141,6 +147,13 @@ def wheel_metadata(path: Path):
     with zipfile.ZipFile(path) as wheel:
         name = next(n for n in wheel.namelist() if n.endswith(".dist-info/METADATA"))
         return email.message_from_string(wheel.read(name).decode("utf-8"))
+
+
+def sdist_metadata(path: Path):
+    """The parsed PKG-INFO of an sdist, at `<name>-<version>/PKG-INFO`."""
+    with tarfile.open(path) as sdist:
+        name = next(n for n in sdist.getnames() if n.count("/") == 1 and n.endswith("/PKG-INFO"))
+        return email.message_from_bytes(sdist.extractfile(name).read())
 
 
 def wheel_files(path: Path) -> dict[str, str]:
@@ -241,19 +254,41 @@ class InstalledPackageTests(unittest.TestCase):
         venv = scratch / "venv"
         checked(run([sys.executable, "-m", "venv", str(venv)]), "python3 -m venv")
         cls.python = venv / BIN / ("python" + EXE)
-        pip = [str(cls.python), "-m", "pip", "--disable-pip-version-check", "-q"]
         dist = scratch / "dist"
-        checked(run([*pip, "wheel", "--no-deps", "--wheel-dir", str(dist), str(REPO_ROOT)]), "pip wheel")
+        checked(run([*cls.pip(), "wheel", "--no-deps", "--wheel-dir", str(dist), str(REPO_ROOT)]), "pip wheel")
         wheels = sorted(dist.glob("*.whl"))
         if len(wheels) != 1:
             raise RuntimeError(f"expected one wheel, found {wheels}")
         cls.wheel = wheels[0]
-        checked(run([*pip, "install", str(cls.wheel)]), "pip install")
+        checked(run([*cls.pip(), "install", str(cls.wheel)]), "pip install")
         cls.script = venv / BIN / (SCRIPT + EXE)
+        cls._sdist = None
 
     @classmethod
     def tearDownClass(cls):
         cls._scratch.cleanup()
+
+    @classmethod
+    def pip(cls) -> list[str]:
+        return [str(cls.python), "-m", "pip", "--disable-pip-version-check", "-q"]
+
+    @classmethod
+    def sdist(cls) -> Path:
+        """The sdist that `python3 -m build --sdist` writes from this checkout,
+        built on first use with the `build` and `hatchling` the scratch
+        environment installs from PyPI."""
+        if cls._sdist is None:
+            checked(run([*cls.pip(), "install", "build", "hatchling>=1.27"]), "pip install build hatchling")
+            sdists = Path(cls._scratch.name) / "sdist"
+            checked(
+                run([str(cls.python), "-m", "build", "--sdist", "--no-isolation", "--outdir", str(sdists), str(REPO_ROOT)]),
+                "python -m build --sdist",
+            )
+            archives = sorted(sdists.glob("*.tar.gz"))
+            if len(archives) != 1:
+                raise RuntimeError(f"expected one sdist, found {archives}")
+            cls._sdist = archives[0]
+        return cls._sdist
 
     def test_wheel_carries_the_pinned_suite(self):
         with zipfile.ZipFile(self.wheel) as wheel:
@@ -291,24 +326,31 @@ class InstalledPackageTests(unittest.TestCase):
         """`python3 -m build` builds the sdist first and the wheel from the
         sdist, and a release uploads both, so the sdist must carry what the
         wheel build reads: the suite, README.md and hatch_build.py."""
-        scratch = Path(self._scratch.name)
-        pip = [str(self.python), "-m", "pip", "--disable-pip-version-check", "-q"]
-        checked(run([*pip, "install", "build", "hatchling>=1.27"]), "pip install build hatchling")
-        sdists = scratch / "sdist"
+        rebuilt = Path(self._scratch.name) / "rebuilt"
         checked(
-            run([str(self.python), "-m", "build", "--sdist", "--no-isolation", "--outdir", str(sdists), str(REPO_ROOT)]),
-            "python -m build --sdist",
-        )
-        archives = sorted(sdists.glob("*.tar.gz"))
-        self.assertEqual(len(archives), 1, archives)
-        rebuilt = scratch / "rebuilt"
-        checked(
-            run([*pip, "wheel", "--no-deps", "--no-build-isolation", "--wheel-dir", str(rebuilt), str(archives[0])]),
+            run([*self.pip(), "wheel", "--no-deps", "--no-build-isolation", "--wheel-dir", str(rebuilt), str(self.sdist())]),
             "pip wheel from the sdist",
         )
         wheels = sorted(rebuilt.glob("*.whl"))
         self.assertEqual(len(wheels), 1, wheels)
         self.assertEqual(wheel_files(wheels[0]), wheel_files(self.wheel))
+
+    def test_artifacts_write_core_metadata_version_2_4(self):
+        """hatchling 1.32 moved its default to Metadata-Version 2.5. Both
+        targets in pyproject.toml set 2.4, which carries every field the
+        package writes, so the artifacts do not depend on which hatchling the
+        build resolves, and twine 6.2.0, which refuses a 2.5 artifact,
+        accepts them."""
+        self.assertEqual(wheel_metadata(self.wheel)["Metadata-Version"], METADATA_VERSION)
+        self.assertEqual(sdist_metadata(self.sdist())["Metadata-Version"], METADATA_VERSION)
+
+    def test_artifacts_pass_twine_check(self):
+        """`twine check --strict` parses each artifact's metadata and renders
+        its description as PyPI does; a release runs it before the upload."""
+        checked(run([*self.pip(), "install", "twine"]), "pip install twine")
+        proc = run([str(self.python), "-m", "twine", "check", "--strict", str(self.wheel), str(self.sdist())])
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(proc.stdout.count("PASSED"), 2, proc.stdout)
 
     def test_suite_root_is_the_installed_copy(self):
         proc = checked(

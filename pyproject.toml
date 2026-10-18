@@ -26,8 +26,16 @@ a2a-idf-conformance = "a2a_idf_conformance:main"
 [tool.hatch.metadata.hooks.custom]
 path = "hatch_build.py"
 
+# Both artifacts write core metadata version 2.4. It carries every field the
+# package sets; hatchling 1.32 moved its default to 2.5, and twine 6.2.0
+# replaces packaging's list of valid metadata versions with one that ends at
+# 2.4, so it refuses a 2.5 wheel or sdist as not a valid metadata version.
+[tool.hatch.build.targets.sdist]
+core-metadata-version = "2.4"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/a2a_idf_conformance"]
+core-metadata-version = "2.4"
 
 # The wheel carries the suite itself, so `pipx run` has the pinned fixtures,
 # both reference verifiers and the parity gate without a clone. The layout
