@@ -12,9 +12,14 @@
 // a fixture missing a required field fails at stage `schema`.
 //
 // Usage:  node verify.mjs <fixture.json | directory> [...]
-// Directories are walked recursively for *.json fixtures.
+//         node verify.mjs --help
+// Directories are walked recursively for *.json fixtures. --help (or -h)
+// prints the usage on stdout. Any other argument that starts with "-", other
+// than "-" alone, is an unknown option, never a fixture path; every argument
+// after "--" is a path.
 // Exit code: 0 if every fixture's expected verdict (and reject category,
-// when pinned) is met, else 1.
+// when pinned) is met, else 1; 2 for a usage error (no path, or an unknown
+// option).
 
 import { lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
@@ -893,20 +898,47 @@ function collectFixtures(arg) {
 // terminal a command. So is a backslash followed by "u" (\u005c), so a \u in the
 // line always begins an escape: a value of the six characters \u001b is not
 // printed as U+001B is. A line of JSON text (jsonText true) keeps its
-// backslashes, which JSON text writes as \\ already.
-function report(line, jsonText = false) {
+// backslashes, which JSON text writes as \\ already. The line goes to stdout
+// unless another print function (console.error) is given.
+function report(line, jsonText = false, print = console.log) {
   const pattern = jsonText ? /[\u0000-\u001f\u007f-\u009f]/g : /[\u0000-\u001f\u007f-\u009f]|\\(?=u)/g;
-  console.log(line.replace(pattern, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`));
+  print(line.replace(pattern, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`));
 }
+
+const USAGE = "usage: node verify.mjs <fixture.json | directory> [...]";
+const HELP = [
+  USAGE,
+  "Directories are walked recursively for *.json fixtures.",
+  "Exit code: 0 when every fixture meets its pinned outcome, 1 otherwise, 2 for a usage error.",
+].join("\n");
 
 function main() {
   const args = process.argv.slice(2);
-  if (args.length === 0) {
-    console.error("usage: node verify.mjs <fixture.json | directory> [...]");
+  // Options are read left to right, before any fixture is, and the first one
+  // met decides. An argument that starts with "-", other than "-" alone, is an
+  // option, never a fixture path; every argument after "--" is a path.
+  let end = args.indexOf("--");
+  if (end === -1) end = args.length;
+  for (const arg of args.slice(0, end)) {
+    if (arg === "--help" || arg === "-h") {
+      console.log(HELP);
+      process.exit(0);
+    }
+    if (arg.startsWith("-") && arg !== "-") {
+      console.error(USAGE);
+      // The argument can be a file name a shell pattern expanded to, so it is
+      // printed as a report line is, its control characters escaped.
+      report(`verify.mjs: unknown option: ${arg}`, false, console.error);
+      process.exit(2);
+    }
+  }
+  const pathArgs = args.filter((_, i) => i !== end);
+  if (pathArgs.length === 0) {
+    console.error(USAGE);
     process.exit(2);
   }
 
-  const paths = args.flatMap(collectFixtures);
+  const paths = pathArgs.flatMap(collectFixtures);
   let passCount = 0;
   let failCount = 0;
   for (const { path: abs, error: listingError } of paths) {

@@ -16,9 +16,14 @@ Every fixture is first checked against its family's schema in ../schemas/;
 a fixture missing a required field fails at stage `schema`.
 
 Usage:  python3 verify.py <fixture.json | directory> [...]
-Directories are walked recursively for *.json fixtures.
+        python3 verify.py --help
+Directories are walked recursively for *.json fixtures. --help (or -h)
+prints the usage on stdout. Any other argument that starts with "-", other
+than "-" alone, is an unknown option, never a fixture path; every argument
+after "--" is a path.
 Exit code: 0 if every fixture's expected verdict (and reject category,
-when pinned) is met, else 1.
+when pinned) is met, else 1; 2 for a usage error (no path, or an unknown
+option).
 """
 
 from __future__ import annotations
@@ -35,7 +40,7 @@ import sys
 import unicodedata
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 from urllib.parse import unquote
 
 # Content-Digest algorithms supported by this verifier (RFC 9530).
@@ -1275,17 +1280,40 @@ def collect_fixtures(arg: str) -> list[tuple[Path, Exception | None]]:
     return sorted(found, key=lambda item: item[0])
 
 
+USAGE = "usage: python3 verify.py <fixture.json | directory> [...]"
+HELP = (
+    f"{USAGE}\n"
+    "Directories are walked recursively for *.json fixtures.\n"
+    "Exit code: 0 when every fixture meets its pinned outcome, 1 otherwise, 2 for a usage error."
+)
+
+
 def main() -> int:
     args = sys.argv[1:]
-    if not args:
-        print("usage: python3 verify.py <fixture.json | directory> [...]", file=sys.stderr)
+    # Options are read left to right, before any fixture is, and the first one
+    # met decides. An argument that starts with "-", other than "-" alone, is an
+    # option, never a fixture path; every argument after "--" is a path.
+    end = args.index("--") if "--" in args else len(args)
+    for arg in args[:end]:
+        if arg in ("--help", "-h"):
+            print(HELP)
+            return 0
+        if arg.startswith("-") and arg != "-":
+            print(USAGE, file=sys.stderr)
+            # The argument can be a file name a shell pattern expanded to, so it
+            # is printed as a report line is, its control characters escaped.
+            _print(f"verify.py: unknown option: {arg}", file=sys.stderr)
+            return 2
+    path_args = args[:end] + args[end + 1 :]
+    if not path_args:
+        print(USAGE, file=sys.stderr)
         return 2
 
     # A stdout that is not UTF-8 may not encode every character of a line: print
     # such a character escaped instead of raising while reporting.
     sys.stdout.reconfigure(errors="backslashreplace")
 
-    paths = [entry for arg in args for entry in collect_fixtures(arg)]
+    paths = [entry for arg in path_args for entry in collect_fixtures(arg)]
     pass_count = 0
     fail_count = 0
     for path, listing_error in paths:
@@ -1317,7 +1345,7 @@ _CONTROL = re.compile("[\x00-\x1f\x7f-\x9f]")
 _CONTROL_OR_BACKSLASH_U = re.compile("[\x00-\x1f\x7f-\x9f]|\\\\(?=u)")
 
 
-def _print(line: str, json_text: bool = False) -> None:
+def _print(line: str, json_text: bool = False, file: TextIO | None = None) -> None:
     """Print a line that can quote a fixture string as it is. A C0 or C1
     control character (U+0000 to U+001F, U+007F to U+009F) is written as a
     lowercase \\uXXXX escape, as in verify.mjs, so a fixture cannot break the
@@ -1328,10 +1356,11 @@ def _print(line: str, json_text: bool = False) -> None:
     already. A lone surrogate, which UTF-8 cannot encode, is written as U+FFFD,
     as console.log in verify.mjs writes it. A schema reason quotes a string as
     JSON text, where _json_text has already escaped a lone surrogate and a C0
-    control character."""
+    control character. The line goes to stdout unless another file
+    (sys.stderr) is given."""
     pattern = _CONTROL if json_text else _CONTROL_OR_BACKSLASH_U
     line = pattern.sub(lambda m: f"\\u{ord(m.group()):04x}", line)
-    print(_SURROGATE.sub("�", line))
+    print(_SURROGATE.sub("�", line), file=file)
 
 
 if __name__ == "__main__":
