@@ -58,11 +58,19 @@ import shlex
 import stat
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 from typing import TextIO
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FIXTURES_DIR = REPO_ROOT / "fixtures"
+
+# Where `--help` sends an implementer for the output format. A URL, not a path:
+# an installed copy of the suite carries no scripts/README.md.
+OUTPUT_FORMAT_URL = (
+    "https://github.com/opena2a-standards/a2a-idf-conformance"
+    "/blob/main/scripts/README.md#testing-another-implementation"
+)
 
 VERIFIERS = {
     "node": {
@@ -119,6 +127,19 @@ def fixture_key(path_str: str) -> str:
     if idx >= 0:
         return rooted[idx + len(marker):]
     return Path(path_str).name
+
+
+class HelpFormatter(argparse.HelpFormatter):
+    """argparse's formatter, except that a help line breaks only at a space.
+
+    argparse wraps help text with textwrap's defaults, which break a word
+    longer than the line and break at hyphens, so OUTPUT_FORMAT_URL would be
+    printed over several indented lines and could not be copied as it is."""
+
+    def _split_lines(self, text: str, width: int) -> list[str]:
+        return textwrap.wrap(
+            " ".join(text.split()), width, break_long_words=False, break_on_hyphens=False
+        )
 
 
 def parse_verifier_spec(spec: str) -> tuple[str, list[str]]:
@@ -246,15 +267,16 @@ def echo_failure(name: str, stdout: str, stderr: str) -> None:
         sys.stderr.write(f"[parity] {name} stdout (last lines):\n{last_lines(stdout)}\n")
 
 
-def run_verifier(name: str, spec: dict) -> tuple[int, dict[str, dict]]:
-    """Run one verifier; return (exit_code, {fixture_key: record})."""
+def run_verifier(name: str, spec: dict) -> tuple[int, dict[str, dict] | None]:
+    """Run one verifier; return (exit_code, {fixture_key: record}). When the
+    command cannot start, the exit code is 127 and the records are None."""
     try:
         proc = subprocess.run(
             spec["cmd"], cwd=spec["cwd"], capture_output=True, text=True
         )
     except OSError as exc:
         sys.stderr.write(f"[parity] {name} verifier could not start: {exc}\n")
-        return 127, {}
+        return 127, None
     records = parse_output(proc.stdout)
     if proc.returncode != 0:
         sys.stderr.write(f"[parity] {name} verifier exited {proc.returncode}\n")
@@ -304,16 +326,32 @@ def outcome_str(record: dict | None) -> str:
     return record["verdict"]
 
 
-def main(prog: str | None = None) -> int:
+def main(prog: str | None = None, version: str | None = None) -> int:
     """Run the gate with the arguments on the command line; return its exit code.
 
     `prog` is the program name the usage and error lines give. None leaves
-    argparse's default, `parity.py` when this file is run as a script."""
+    argparse's default, `parity.py` when this file is run as a script.
+
+    `version` is the line that `--version` prints. The `a2a_idf_conformance`
+    package passes its name and version; None, as when this file is run as a
+    script, leaves the option out."""
     ap = argparse.ArgumentParser(
         prog=prog,
         description="Run the reference verifiers and any implementation under test over the "
-        "fixture set; fail on any disagreement with each other or with the pinned outcomes."
+        "fixture set; fail on any disagreement with each other or with the pinned outcomes.",
+        formatter_class=HelpFormatter,
+        # An option must be spelled in full, so a typo such as `--jso` is
+        # reported instead of being taken for the option it abbreviates.
+        allow_abbrev=False,
     )
+    if version is not None:
+        ap.add_argument(
+            "-V",
+            "--version",
+            action="version",
+            version=version,
+            help="show the package name and version and exit; the word version alone does the same",
+        )
     ap.add_argument("--json", metavar="PATH", help="write a JSON parity report")
     ap.add_argument(
         "--verifier",
@@ -323,9 +361,15 @@ def main(prog: str | None = None) -> int:
         type=parse_verifier_spec,
         help="add an implementation under test (repeatable). COMMAND runs from the current "
         "directory with the absolute fixtures/ path appended as its last argument and must "
-        "print the reference verifier output format (see scripts/README.md)",
+        "print the reference verifier output format; the interface is documented at "
+        f"{OUTPUT_FORMAT_URL}",
     )
-    args = ap.parse_args()
+    arguments = sys.argv[1:]
+    # The gate takes no positional argument, so this word on its own can only
+    # be a request for the version.
+    if version is not None and arguments == ["version"]:
+        arguments = ["--version"]
+    args = ap.parse_args(arguments)
 
     verifiers = dict(VERIFIERS)
     for name, argv in args.verifier:
@@ -360,9 +404,13 @@ def main(prog: str | None = None) -> int:
 
     results: dict[str, dict[str, dict]] = {}
     exit_codes: dict[str, int] = {}
+    not_started: set[str] = set()
     for name, spec in verifiers.items():
         code, records = run_verifier(name, spec)
         exit_codes[name] = code
+        if records is None:
+            not_started.add(name)
+            records = {}
         results[name] = records
 
     for name, code in exit_codes.items():
@@ -370,6 +418,11 @@ def main(prog: str | None = None) -> int:
             divergences.append(f"{name} verifier exited {code} (expected 0)")
 
     for name, records in results.items():
+        # A verifier that could not start reported no fixture, and the exit
+        # code line above already reports it: a list of every fixture as
+        # missing would add nothing.
+        if name in not_started:
+            continue
         seen = sorted(records)
         if seen != fixture_files:
             missing = set(fixture_files) - set(seen)

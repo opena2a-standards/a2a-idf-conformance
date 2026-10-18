@@ -401,6 +401,22 @@ class VerifierOptionTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 1)
         self.assertIn("stub verifier exited 127 (expected 0)", report["divergences"])
 
+    def test_command_that_cannot_start_is_not_also_listed_as_missing_every_fixture(self):
+        missing = str(self.tmp / "no-such-verifier")
+        proc, report = run_parity("--verifier", f"stub={missing}", cwd=self.tmp)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(report["divergences"], ["stub verifier exited 127 (expected 0)"])
+        self.assertIn("[parity] stub verifier could not start: ", proc.stderr)
+        # A command that starts, exits 0 and reports no fixture keeps the line,
+        # since nothing else reports it.
+        silent = "stub=" + shlex.join([sys.executable, "-c", "pass"])
+        proc, report = run_parity("--verifier", silent, cwd=self.tmp)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(
+            report["divergences"],
+            [f"stub fixture set mismatch: missing={self.fixture_files} extra=[]"],
+        )
+
     def test_malformed_specs_are_usage_errors(self):
         for spec in ("no-equals-sign", "=cmd", "stub=", "node=./other"):
             with self.subTest(spec=spec):
@@ -609,6 +625,31 @@ class ErrorReasonTests(unittest.TestCase):
         self.assertEqual(parity.last_lines(f"cut\nx{lines}\n"), "y" * (size // 2))
         # A last line longer than the window is cut to it.
         self.assertEqual(parity.last_lines("z" * (size + 5)), "z" * size)
+
+
+class CommandLineTests(unittest.TestCase):
+    """Options the gate refuses as usage errors, exit 2, before it runs a verifier."""
+
+    def run_gate(self, *args: str) -> tuple[subprocess.CompletedProcess, list[str]]:
+        """Run the gate from a scratch directory; return the process and the
+        names of the files it left there."""
+        with tempfile.TemporaryDirectory() as cwd:
+            proc = subprocess.run(
+                [sys.executable, str(PARITY), *args], cwd=cwd, capture_output=True, text=True
+            )
+            return proc, sorted(os.listdir(cwd))
+
+    def test_abbreviated_option_is_a_usage_error(self):
+        # Taken as `--json` and `--verifier`, these would run the gate.
+        for args in (["--jso", "report.json"], ["--v", "x=true"]):
+            with self.subTest(args=args):
+                proc, written = self.run_gate(*args)
+                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                self.assertEqual(
+                    proc.stderr.splitlines()[-1],
+                    f"parity.py: error: unrecognized arguments: {' '.join(args)}",
+                )
+                self.assertEqual(written, [])
 
 
 if __name__ == "__main__":
