@@ -22,11 +22,26 @@ Usage:
     python3 scripts/parity/parity.py [--json parity-report.json]
                                      [--verifier NAME=COMMAND ...]
 
+`--json` writes the report to PATH. PATH is opened for writing while the
+arguments are read, so a path that cannot be written (in a directory that does
+not exist, a directory, one without write permission) is a usage error before
+any verifier runs. Two consequences: the file is created, or emptied when it
+exists, and stays empty when the run ends before the report is written (a
+usage error found after `--json` is read, or no fixtures found); and with
+`--json` given twice, the first path is created empty and the second is
+written.
+
 `--verifier` adds an implementation under test. COMMAND is split with
 shell-style quoting (no shell is invoked), run from the current directory, and
 given the absolute path of the fixtures/ directory as its last argument. It
 must print the same per-fixture blocks as the reference verifiers; the
 interface is documented in scripts/README.md.
+
+Each ERROR a verifier reports is a divergence of its own, which carries the
+reason line the verifier printed under it. When a verifier exits non-zero, the
+gate writes to stderr its ERROR blocks (the first 20) and the last lines of
+its stderr, or of its stdout when it printed neither an ERROR block nor
+anything on stderr.
 
 Exit codes: 0 = all implementations agree, 1 = divergence or verifier error,
 2 = usage error.
@@ -40,6 +55,7 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
+from typing import TextIO
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FIXTURES_DIR = REPO_ROOT / "fixtures"
@@ -62,6 +78,11 @@ BLOCK_GATES = ("PASS", "FAIL", "ERROR")
 # `observed: ACCEPT` or `observed: REJECT[CATEGORY]`
 OBSERVED_RE = re.compile(r"^\s*observed:\s+(ACCEPT|REJECT\[([A-Z_]+)\])")
 VERIFIER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# When a verifier exits non-zero, at most this many of its ERROR blocks are
+# echoed, and the lines of its stderr (or stdout) that start within this many
+# bytes of the end.
+ECHO_ERROR_BLOCKS = 20
+ECHO_TAIL_BYTES = 2000
 
 
 def parse_block_line(line: str) -> tuple[str, str] | None:
@@ -75,6 +96,11 @@ def parse_block_line(line: str) -> tuple[str, str] | None:
     if len(parts) < 2 or parts[0] not in BLOCK_GATES or not line.startswith(parts[0]):
         return None
     return parts[0], parts[1].rstrip()
+
+
+def is_indented(line: str) -> bool:
+    """True when `line` starts with a space or a tab and holds other text."""
+    return line.startswith((" ", "\t")) and not line.isspace()
 
 
 def fixture_key(path_str: str) -> str:
@@ -108,8 +134,24 @@ def parse_verifier_spec(spec: str) -> tuple[str, list[str]]:
     return name, argv
 
 
+def open_report(path: str) -> TextIO:
+    """argparse type for `--json PATH`: PATH opened for writing.
+
+    Opened while the arguments are read, so a path that cannot be written is
+    a usage error before any verifier runs, not an exception after the run,
+    which would lose the verdict."""
+    try:
+        return open(path, "w", encoding="utf-8")
+    except OSError as exc:
+        raise argparse.ArgumentTypeError(f"cannot write {path!r}: {exc.strerror}") from exc
+
+
 def parse_output(stdout: str) -> dict[str, dict]:
     """Parse verifier stdout into {fixture_key: {gate, verdict, category}}.
+
+    An ERROR record also holds `reason`: the first indented line after its
+    block line, stripped, where the verifiers print the error, or None when
+    the block has no indented line.
 
     Lines are split at line feeds only, as the verifiers write them. A reason
     can quote a fixture value as it is, and str.splitlines() would also break
@@ -123,9 +165,14 @@ def parse_output(stdout: str) -> dict[str, dict]:
             gate, path = block
             current = fixture_key(path)
             records[current] = {"gate": gate, "verdict": None, "category": None}
+            if gate == "ERROR":
+                records[current]["reason"] = None
             continue
         if current is None:
             continue
+        record = records[current]
+        if "reason" in record and record["reason"] is None and is_indented(line):
+            record["reason"] = line.strip()
         om = OBSERVED_RE.match(line)
         if om:
             if om.group(1) == "ACCEPT":
@@ -134,6 +181,57 @@ def parse_output(stdout: str) -> dict[str, dict]:
                 records[current]["verdict"] = "REJECT"
                 records[current]["category"] = om.group(2)
     return records
+
+
+def error_blocks(stdout: str) -> list[list[str]]:
+    """The ERROR blocks of verifier stdout, as printed: each block line with
+    the indented lines that follow it before the next block line."""
+    blocks: list[list[str]] = []
+    current: list[str] | None = None
+    for line in stdout.split("\n"):
+        block = parse_block_line(line)
+        if block:
+            current = [line] if block[0] == "ERROR" else None
+            if current is not None:
+                blocks.append(current)
+        elif current is not None and is_indented(line):
+            current.append(line)
+    return blocks
+
+
+def last_lines(text: str) -> str:
+    """The end of `text`, without its final line feeds: the lines that start
+    within its last ECHO_TAIL_BYTES bytes (UTF-8), so no line is cut, or the
+    whole text when it is shorter. When the last line alone is longer than
+    that, it is cut to those bytes."""
+    text = text.rstrip("\n")
+    data = text.encode("utf-8", "replace")
+    if len(data) <= ECHO_TAIL_BYTES:
+        return text
+    begin = len(data) - ECHO_TAIL_BYTES
+    # A line that starts within the window follows a line feed at or after
+    # the byte just before it.
+    feed = data.find(b"\n", begin - 1)
+    start = feed + 1 if feed >= 0 else begin
+    return data[start:].decode("utf-8", "replace")
+
+
+def echo_failure(name: str, stdout: str, stderr: str) -> None:
+    """Write to stderr what a verifier that exited non-zero printed about it:
+    its ERROR blocks (at most ECHO_ERROR_BLOCKS), then the last lines of its
+    stderr. With neither, the last lines of its stdout, so a diagnostic
+    printed outside the block format is not lost."""
+    blocks = error_blocks(stdout)
+    if blocks:
+        sys.stderr.write(f"[parity] {name} ERROR blocks:\n")
+        for block in blocks[:ECHO_ERROR_BLOCKS]:
+            sys.stderr.write("\n".join(block) + "\n")
+        if len(blocks) > ECHO_ERROR_BLOCKS:
+            sys.stderr.write(f"[parity] ... and {len(blocks) - ECHO_ERROR_BLOCKS} more\n")
+    if stderr.strip():
+        sys.stderr.write(f"[parity] {name} stderr (last lines):\n{last_lines(stderr)}\n")
+    elif not blocks and stdout.strip():
+        sys.stderr.write(f"[parity] {name} stdout (last lines):\n{last_lines(stdout)}\n")
 
 
 def run_verifier(name: str, spec: dict) -> tuple[int, dict[str, dict]]:
@@ -148,7 +246,7 @@ def run_verifier(name: str, spec: dict) -> tuple[int, dict[str, dict]]:
     records = parse_output(proc.stdout)
     if proc.returncode != 0:
         sys.stderr.write(f"[parity] {name} verifier exited {proc.returncode}\n")
-        sys.stderr.write(proc.stdout[-2000:] + proc.stderr[-2000:] + "\n")
+        echo_failure(name, proc.stdout, proc.stderr)
     return proc.returncode, records
 
 
@@ -204,7 +302,9 @@ def main(prog: str | None = None) -> int:
         description="Run the reference verifiers and any implementation under test over the "
         "fixture set; fail on any disagreement with each other or with the pinned outcomes."
     )
-    ap.add_argument("--json", metavar="PATH", help="write a JSON parity report")
+    ap.add_argument(
+        "--json", metavar="PATH", type=open_report, help="write a JSON parity report"
+    )
     ap.add_argument(
         "--verifier",
         metavar="NAME=COMMAND",
@@ -268,6 +368,9 @@ def main(prog: str | None = None) -> int:
             vals = {n: row[n][field] for n in present}
             if len(set(vals.values())) > 1:
                 divergences.append(f"{fx}: {field} divergence {vals}")
+        for n in present:
+            if row[n]["gate"] == "ERROR":
+                divergences.append(f"{fx}: {n} ERROR: {row[n]['reason'] or 'no reason line'}")
         pin = pinned[fx]
         if pin is None:
             continue
@@ -293,21 +396,22 @@ def main(prog: str | None = None) -> int:
                 cells.append(f"{n}={r['gate']}:{v}{cat}")
         print(f"  {fx:60s} {'  '.join(cells)}")
 
-    if args.json:
-        Path(args.json).write_text(
-            json.dumps(
-                {
-                    "fixtures": table,
-                    "pinned": {fx: outcome_str(pin) for fx, pin in pinned.items()},
-                    "exitCodes": exit_codes,
-                    "divergences": divergences,
-                    "agree": not divergences,
-                },
-                indent=2,
-                sort_keys=True,
+    if args.json is not None:
+        with args.json as report:
+            report.write(
+                json.dumps(
+                    {
+                        "fixtures": table,
+                        "pinned": {fx: outcome_str(pin) for fx, pin in pinned.items()},
+                        "exitCodes": exit_codes,
+                        "divergences": divergences,
+                        "agree": not divergences,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
             )
-            + "\n"
-        )
 
     if divergences:
         print("\nPARITY: FAIL")
