@@ -142,3 +142,25 @@ test("the passages that say what the generator writes name the snapshot fixtures
     );
   }
 });
+
+// serialize() in the generator calls JSON.stringify(content, null, 2), which
+// writes U+0000-U+001F in a string as escapes and puts only line feeds and
+// spaces between tokens, and then writes DEL (U+007F), the C1 control
+// characters (U+0080-U+009F) and the soft hyphen (U+00AD) as escapes. None of
+// these is a graphic character, so a raw one in a pinned file can pass unseen
+// in an editor or a diff.
+const RAW_INVISIBLE = /[\x00-\x09\x0b-\x1f\x7f-\x9f\xad]/g;
+
+test("no pinned file carries a raw control character other than the line feed, or a raw soft hyphen", () => {
+  const raw = [];
+  for (const rel of manifest(readFileSync(join(REPO, "MANIFEST.sha256"), "utf8")).keys()) {
+    readFileSync(join(REPO, rel), "utf8")
+      .split("\n")
+      .forEach((line, index) => {
+        for (const [c] of line.matchAll(RAW_INVISIBLE)) {
+          raw.push(`${rel}:${index + 1}: U+${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0")}`);
+        }
+      });
+  }
+  assert.deepEqual(raw, [], `write these code points as JSON escapes (see serialize() in ${GENERATOR}):\n${raw.join("\n")}`);
+});

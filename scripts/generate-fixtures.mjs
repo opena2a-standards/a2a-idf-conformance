@@ -1905,10 +1905,17 @@ const FILES = {
   "fixtures/levels/level-2-jcs-utf16-key-order.json": level2JcsUtf16KeyOrderFixture(),
 };
 
-// A soft hyphen is invisible in most editors and diffs, so a fixture that
-// carries one writes it as a JSON escape. The parsed value is the same.
+// JSON.stringify writes U+0000-U+001F in a string as escapes, but writes DEL
+// (U+007F), the C1 control characters (U+0080-U+009F) and the soft hyphen
+// (U+00AD) as they are. None of these is a graphic character, so a raw one can
+// pass unseen in an editor or a diff; serialize() writes each as a JSON escape
+// instead. The parsed value is the same.
 function serialize(content) {
-  return JSON.stringify(content, null, 2).replaceAll("\u00ad", "\\u00ad") + "\n";
+  const json = JSON.stringify(content, null, 2).replace(
+    /[\u007f-\u009f\u00ad]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+  return json + "\n";
 }
 
 function assertEqual(actual, expected, what) {

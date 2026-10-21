@@ -42,7 +42,7 @@ bdb267e5342ba7223bd60050eaaad718e2b1bc59a1f4f3cdf3a83f4f77b93d8b  fixtures/level
 820c699c4d55f81862ac3698e87b1bcd25f8986d66a1e56628915a6a73fb1959  fixtures/levels/level-1-provider-url-percent-encoded.json
 057cd7b22d908fe2a97bf9f3695535f3da538a110b66d6d0a2bff29475491235  fixtures/levels/level-1-provider-url-space-in-host.json
 f86bef7a99d4cca99bca697cf1c5764c3206c20b0200a0a070017b86d731d4fe  fixtures/levels/level-2-attestation-expired.json
-8a5a83adc5515e9730488b2cd71e10f022775c07a7c4352262284d8893860351  fixtures/levels/level-2-attestation-non-bmp-keys.json
+a4b63cfa84540efdde6bfd3c400f4b25fdf8d746667e29d6760cf4b65cc673f1  fixtures/levels/level-2-attestation-non-bmp-keys.json
 fbfb8785acd308484eed9403bfa5352d9a4ca1c27b65cee65b543e30bb1c62cd  fixtures/levels/level-2-attestation-not-yet-valid.json
 f7a0e6a94467ca964c695a7e4cfe2f91c9a2786b36ef2bbd8cbb7e5528304889  fixtures/levels/level-2-attestation-tampered.json
 fa1a1e646e8051d13e481fd166abfa89b88a443d1b9d6afb4b7b7f47d4996c75  fixtures/levels/level-2-issuer-not-object.json
