@@ -87,7 +87,7 @@ The reference verifiers check the wire signature in all three shapes, and then t
 - **Delegation chain:** each link carries its issuer's Ed25519 signature over the RFC 8785 JCS form of the link, bound to the signature of the link before it. The verifiers check the number of links against `maxDepth`, that each link's issuer is the subject of the link before it, each link's signature, that each scope is a subset of the one before it and no expiry is later than the one before it, and that the last link delegates to the key that signed the request with a scope that grants it.
 - **Bilateral receipt:** the verifiers check the responder's Ed25519 signature over the JCS form of the receipt payload, and that the payload names the signature and keyid of this request and the responder, response time and status the envelope states.
 
-Twelve negative fixtures pin these checks, each with one envelope defect ([table](./fixtures/composition/aim-did-rfc9421/README.md#shapes)).
+Twelve negative fixtures each carry one envelope defect ([table](./fixtures/composition/aim-did-rfc9421/README.md#shapes)): nine break one of the chain checks, and three break the responder's signature, the request signature the payload names, or the status the envelope states. No fixture breaks the request keyid, which the payload and `envelope.request` both name, or the responder and response time the envelope states; a test in [`scripts/test/verify.test.mjs`](./scripts/test/verify.test.mjs) checks that both reference verifiers reject each of those four as `RECEIPT_MISMATCH`.
 
 These shapes parallel the `envoys-rfc9421/` fixtures hosted in `aeoess/aps-conformance-suite` so that any verifier passing both suites can demonstrate cross-implementation byte-match.
 

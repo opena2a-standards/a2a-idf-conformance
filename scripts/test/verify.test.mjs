@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { generateKeyPairSync } from "node:crypto";
+import { createPrivateKey, generateKeyPairSync, sign } from "node:crypto";
 import {
   chmodSync,
   mkdirSync,
@@ -1335,6 +1335,59 @@ test("both verifiers reject a widened chain and a corrupted receipt, and fail an
       "envelope.response.responderSignatureBase64 does not verify over the JCS form of envelope.response.receiptPayloadJcs",
     ),
     "link-unsigned.json": ["FAIL", "stage:  envelope", "reason: envelope.links[1].signature is missing or not a string"],
+  });
+  assert.deepEqual(blocks.python, blocks.node);
+});
+
+// No committed fixture breaks four of the RECEIPT_MISMATCH comparisons: the
+// request keyid in the signed payload and in envelope.request against the wire
+// keyid, and the responder keyid and the response time beside the payload
+// against the members the responder signed. A verifier that skipped them passed
+// the suite. Each variant breaks one and keeps the pinned ACCEPT of its source.
+// The payload variant is signed again with the responder's key, the RFC 8032
+// Test 2 key, so its responder signature verifies.
+test("both verifiers reject a receipt whose request keyid, responder keyid or response time does not match", (t) => {
+  const RECEIPT = "fixtures/composition/aim-did-rfc9421/bilateral-receipt.json";
+  const OTHER_KEYID = "did:web:counterparty.example:agents:delegate-level-2";
+  const vector = JSON.parse(readFileSync(join(REPO, "vectors", "rfc8032-7-1-test2.json"), "utf8"));
+  const responderKey = createPrivateKey({ key: vector.private.privateKeyJwk, format: "jwk" });
+  // The payload holds only strings, so its JCS form is its members sorted by
+  // UTF-16 code units, which Array.prototype.sort() does, each written by
+  // JSON.stringify.
+  const signPayload = (payload) => {
+    const members = Object.keys(payload).sort();
+    const jcs = `{${members.map((k) => `${JSON.stringify(k)}:${JSON.stringify(payload[k])}`).join(",")}}`;
+    return sign(null, Buffer.from(jcs, "utf8"), responderKey).toString("base64");
+  };
+  const { response } = JSON.parse(readFileSync(join(REPO, RECEIPT), "utf8")).envelope;
+  assert.equal(signPayload(response.receiptPayloadJcs), response.responderSignatureBase64, "the committed receipt");
+  const where = "envelope.response.receiptPayloadJcs";
+  const mismatch = (reason) => [
+    "FAIL",
+    "observed: REJECT[RECEIPT_MISMATCH]",
+    "stage:  verdict",
+    `reason: verify result REJECT[RECEIPT_MISMATCH] != expected ACCEPT (${reason})`,
+  ];
+  const variants = {
+    "payload-initiator-keyid.json": literalVariant(RECEIPT, (fx) => {
+      const signed = fx.envelope.response;
+      signed.receiptPayloadJcs.initiatorKeyid = OTHER_KEYID;
+      signed.responderSignatureBase64 = signPayload(signed.receiptPayloadJcs);
+    }),
+    "request-initiator-keyid.json": literalVariant(RECEIPT, (fx) => (fx.envelope.request.initiatorKeyid = OTHER_KEYID)),
+    "response-responder-keyid.json": literalVariant(RECEIPT, (fx) => (fx.envelope.response.responderKeyid = OTHER_KEYID)),
+    "response-responded-at.json": literalVariant(RECEIPT, (fx) => (fx.envelope.response.respondedAt = "2026-05-13T13:31:03Z")),
+  };
+  const blocks = runOverVariants(t, variants);
+  assert.deepEqual(blocks.node, {
+    "payload-initiator-keyid.json": mismatch(`${where}.initiatorKeyid is not signatureParams.keyid`),
+    "request-initiator-keyid.json": mismatch("envelope.request.initiatorKeyid is not signatureParams.keyid"),
+    "response-responder-keyid.json": mismatch(
+      `envelope.response.responderKeyid is not ${where}.responderKeyid, which the responder signed`,
+    ),
+    "response-responded-at.json": mismatch(
+      `envelope.response.respondedAt is not ${where}.respondedAt, which the responder signed`,
+    ),
   });
   assert.deepEqual(blocks.python, blocks.node);
 });
