@@ -111,19 +111,27 @@ test("--check fails when docs/coverage.md says the suite composes with a layer n
   );
 });
 
-// The layer table in docs/coverage.md states this repository's coverage of the
-// delegation chain envelope, which notCovered lists.
-test("--check fails when docs/coverage.md claims an envelope notCovered lists without \"(unverified)\"", (t) => {
+// Both verifiers check the delegation chain envelope, so notCovered no longer
+// lists it and README.md and docs/coverage.md claim it without "(unverified)".
+// The copy of the script lists it again, and each of those claims is reported.
+test("--check fails when README.md and docs/coverage.md claim an envelope notCovered lists without \"(unverified)\"", (t) => {
   const root = scratchCopy(t);
-  editFile(root, "docs/coverage.md", (text) =>
-    text.replace("delegation chain envelope shapes (unverified)", "delegation chain envelope shapes"),
+  editFile(root, "scripts/conformance_profile.py", (text) =>
+    text.replace(
+      '"notCovered": [',
+      '"notCovered": [{"specSection": "§7 Delegation chains — per-link signatures", "reason": "listed by the test"},',
+    ),
   );
+  // The profile of the copy now lists the entry, so it is regenerated first.
+  const regenerated = run(root);
+  assert.equal(regenerated.status, 0, regenerated.stdout + regenerated.stderr);
   const result = check(root);
   assert.equal(result.status, 1, result.stdout + result.stderr);
   const lines = result.stdout.trim().split("\n");
-  assert.equal(lines.length, 1, result.stdout);
+  assert.equal(lines.length, 2, result.stdout);
+  assert.match(lines[0], /^README\.md:\d+ claims delegation chain coverage, but notCovered lists '§7 Delegation chains/);
   assert.match(
-    lines[0],
+    lines[1],
     /^docs\/coverage\.md:\d+ claims delegation chain coverage, but notCovered lists '§7 Delegation chains/,
   );
 });

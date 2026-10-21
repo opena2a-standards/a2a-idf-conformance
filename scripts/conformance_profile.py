@@ -36,7 +36,7 @@ SUITE = {
         {
             "language": "node",
             "path": "scripts/verify.mjs",
-            "coverage": "full: composition (RFC 9421 wire layer + §6 dual-shape keyid resolution) and levels (§1 SELF_ASSERTED / DOMAIN_VERIFIED / ORGANIZATION_VERIFIED)",
+            "coverage": "full: composition (RFC 9421 wire layer + §6 dual-shape keyid resolution + §7 delegation-chain and §8 bilateral-receipt envelopes) and levels (§1 SELF_ASSERTED / DOMAIN_VERIFIED / ORGANIZATION_VERIFIED)",
         },
         {
             "language": "python",
@@ -50,12 +50,8 @@ SUITE = {
             "reason": "fixtures pin the TXT record content; live resolution is deployment behavior, not byte-stable",
         },
         {
-            "specSection": "§7 Delegation chains — per-link signatures and chain-rule enforcement",
-            "reason": "envelope shapes pinned in fixtures; deeper verification lands once APS delegation schemas stabilize",
-        },
-        {
-            "specSection": "§8 Bilateral receipts — responder signature over the JCS receipt payload",
-            "reason": "same APS schema-stability dependency as delegation chains",
+            "specSection": "§7 and §8 envelopes — link and receipt timestamps against the time of verification",
+            "reason": "the envelope fixtures pin no verification time, so neither verifier compares issuedAt, expiresAt or respondedAt with a clock",
         },
         {
             "specSection": "v1.1 Vouching attestations",
@@ -72,8 +68,9 @@ SUITE = {
 # Coverage claims in README.md and docs/coverage.md must not outrun
 # `notCovered`. While one of these sections is listed there, any line of those
 # documents that states this repository's coverage and names the envelope must
-# mark it "(unverified)". Removing the notCovered entry (once the verifiers
-# check the envelope) lifts the requirement.
+# mark it "(unverified)". Both reference verifiers check both envelopes, so
+# notCovered lists neither section and the rule applies again only if one is
+# listed there.
 UNVERIFIED_ENVELOPES = {
     "§7 Delegation chains": "delegation chain",
     "§8 Bilateral receipts": "bilateral receipt",

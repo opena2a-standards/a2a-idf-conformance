@@ -6,6 +6,42 @@
     "python": 0
   },
   "fixtures": {
+    "composition/aim-did-rfc9421/bilateral-receipt-other-request.json": {
+      "node": {
+        "category": "RECEIPT_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "RECEIPT_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "composition/aim-did-rfc9421/bilateral-receipt-signature-tampered.json": {
+      "node": {
+        "category": "RECEIPT_SIGNATURE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "RECEIPT_SIGNATURE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "composition/aim-did-rfc9421/bilateral-receipt-status-mismatch.json": {
+      "node": {
+        "category": "RECEIPT_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "RECEIPT_MISMATCH",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
     "composition/aim-did-rfc9421/bilateral-receipt.json": {
       "node": {
         "category": null,
@@ -52,6 +88,114 @@
         "category": null,
         "gate": "PASS",
         "verdict": "ACCEPT"
+      }
+    },
+    "composition/aim-did-rfc9421/delegation-chain-depth-exceeded.json": {
+      "node": {
+        "category": "DEPTH_EXCEEDED",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "DEPTH_EXCEEDED",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "composition/aim-did-rfc9421/delegation-chain-expiry-extended.json": {
+      "node": {
+        "category": "EXPIRY_EXTENDED",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "EXPIRY_EXTENDED",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "composition/aim-did-rfc9421/delegation-chain-issuer-not-delegate.json": {
+      "node": {
+        "category": "CHAIN_BROKEN",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "CHAIN_BROKEN",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "composition/aim-did-rfc9421/delegation-chain-leaf-not-signer.json": {
+      "node": {
+        "category": "CHAIN_BROKEN",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "CHAIN_BROKEN",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "composition/aim-did-rfc9421/delegation-chain-link-replaced.json": {
+      "node": {
+        "category": "LINK_SIGNATURE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "LINK_SIGNATURE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "composition/aim-did-rfc9421/delegation-chain-link-tampered.json": {
+      "node": {
+        "category": "LINK_SIGNATURE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "LINK_SIGNATURE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "composition/aim-did-rfc9421/delegation-chain-request-out-of-scope.json": {
+      "node": {
+        "category": "REQUEST_OUT_OF_SCOPE",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "REQUEST_OUT_OF_SCOPE",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "composition/aim-did-rfc9421/delegation-chain-root-tampered.json": {
+      "node": {
+        "category": "LINK_SIGNATURE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "LINK_SIGNATURE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
+    "composition/aim-did-rfc9421/delegation-chain-scope-widened.json": {
+      "node": {
+        "category": "SCOPE_WIDENED",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "SCOPE_WIDENED",
+        "gate": "PASS",
+        "verdict": "REJECT"
       }
     },
     "composition/aim-did-rfc9421/key-substituted.json": {
@@ -500,10 +644,22 @@
     }
   },
   "pinned": {
+    "composition/aim-did-rfc9421/bilateral-receipt-other-request.json": "REJECT[RECEIPT_MISMATCH]",
+    "composition/aim-did-rfc9421/bilateral-receipt-signature-tampered.json": "REJECT[RECEIPT_SIGNATURE_INVALID]",
+    "composition/aim-did-rfc9421/bilateral-receipt-status-mismatch.json": "REJECT[RECEIPT_MISMATCH]",
     "composition/aim-did-rfc9421/bilateral-receipt.json": "ACCEPT",
     "composition/aim-did-rfc9421/body-tampered.json": "REJECT[SIGNATURE_INVALID]",
     "composition/aim-did-rfc9421/cross-suite-mismatch.json": "REJECT[CROSS_SUITE_MISMATCH]",
     "composition/aim-did-rfc9421/delegation-chain-3link.json": "ACCEPT",
+    "composition/aim-did-rfc9421/delegation-chain-depth-exceeded.json": "REJECT[DEPTH_EXCEEDED]",
+    "composition/aim-did-rfc9421/delegation-chain-expiry-extended.json": "REJECT[EXPIRY_EXTENDED]",
+    "composition/aim-did-rfc9421/delegation-chain-issuer-not-delegate.json": "REJECT[CHAIN_BROKEN]",
+    "composition/aim-did-rfc9421/delegation-chain-leaf-not-signer.json": "REJECT[CHAIN_BROKEN]",
+    "composition/aim-did-rfc9421/delegation-chain-link-replaced.json": "REJECT[LINK_SIGNATURE_INVALID]",
+    "composition/aim-did-rfc9421/delegation-chain-link-tampered.json": "REJECT[LINK_SIGNATURE_INVALID]",
+    "composition/aim-did-rfc9421/delegation-chain-request-out-of-scope.json": "REJECT[REQUEST_OUT_OF_SCOPE]",
+    "composition/aim-did-rfc9421/delegation-chain-root-tampered.json": "REJECT[LINK_SIGNATURE_INVALID]",
+    "composition/aim-did-rfc9421/delegation-chain-scope-widened.json": "REJECT[SCOPE_WIDENED]",
     "composition/aim-did-rfc9421/key-substituted.json": "REJECT[SIGNATURE_INVALID]",
     "composition/aim-did-rfc9421/signature-alone.json": "ACCEPT",
     "composition/aim-did-rfc9421/signature-tag-absent.json": "ACCEPT",

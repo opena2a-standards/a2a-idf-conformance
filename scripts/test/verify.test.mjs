@@ -1217,3 +1217,44 @@ test(
     }
   },
 );
+
+// Both verifiers read the envelope once the wire signature verifies. Each
+// variant keeps the pinned ACCEPT of its source, so the observed reject and its
+// reason are printed. A chain widened to DELETE /api/everything with expiry
+// 2099 and a receipt whose initiatorSignatureBase64 is corrupted were accepted
+// while neither verifier read the envelope; a link without a signature, as
+// every link was then, cannot be read.
+test("both verifiers reject a widened chain and a corrupted receipt, and fail an unsigned link", (t) => {
+  const CHAIN = "fixtures/composition/aim-did-rfc9421/delegation-chain-3link.json";
+  const RECEIPT = "fixtures/composition/aim-did-rfc9421/bilateral-receipt.json";
+  const rejected = (category, reason) => [
+    "FAIL",
+    `observed: REJECT[${category}]`,
+    "stage:  verdict",
+    `reason: verify result REJECT[${category}] != expected ACCEPT (${reason})`,
+  ];
+  const variants = {
+    "chain-widened.json": literalVariant(CHAIN, (fx) => {
+      fx.envelope.links[2].scope = ["DELETE /api/everything"];
+      fx.envelope.links[2].expiresAt = "2099-01-01T00:00:00Z";
+    }),
+    "receipt-corrupted.json": literalVariant(RECEIPT, (fx) => {
+      const payload = fx.envelope.response.receiptPayloadJcs;
+      payload.initiatorSignatureBase64 = "A" + payload.initiatorSignatureBase64.slice(1);
+    }),
+    "link-unsigned.json": literalVariant(CHAIN, (fx) => delete fx.envelope.links[1].signature),
+  };
+  const blocks = runOverVariants(t, variants);
+  assert.deepEqual(blocks.node, {
+    "chain-widened.json": rejected(
+      "LINK_SIGNATURE_INVALID",
+      "envelope.links[2].signature does not verify over the JCS form of the link payload",
+    ),
+    "receipt-corrupted.json": rejected(
+      "RECEIPT_SIGNATURE_INVALID",
+      "envelope.response.responderSignatureBase64 does not verify over the JCS form of envelope.response.receiptPayloadJcs",
+    ),
+    "link-unsigned.json": ["FAIL", "stage:  envelope", "reason: envelope.links[1].signature is missing or not a string"],
+  });
+  assert.deepEqual(blocks.python, blocks.node);
+});

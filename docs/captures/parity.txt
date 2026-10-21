@@ -1,8 +1,20 @@
-parity: 41 fixtures x 2 verifiers
+parity: 53 fixtures x 2 verifiers
+  composition/aim-did-rfc9421/bilateral-receipt-other-request.json node=PASS:REJECT[RECEIPT_MISMATCH]  python=PASS:REJECT[RECEIPT_MISMATCH]
+  composition/aim-did-rfc9421/bilateral-receipt-signature-tampered.json node=PASS:REJECT[RECEIPT_SIGNATURE_INVALID]  python=PASS:REJECT[RECEIPT_SIGNATURE_INVALID]
+  composition/aim-did-rfc9421/bilateral-receipt-status-mismatch.json node=PASS:REJECT[RECEIPT_MISMATCH]  python=PASS:REJECT[RECEIPT_MISMATCH]
   composition/aim-did-rfc9421/bilateral-receipt.json           node=PASS:ACCEPT  python=PASS:ACCEPT
   composition/aim-did-rfc9421/body-tampered.json               node=PASS:REJECT[SIGNATURE_INVALID]  python=PASS:REJECT[SIGNATURE_INVALID]
   composition/aim-did-rfc9421/cross-suite-mismatch.json        node=PASS:REJECT[CROSS_SUITE_MISMATCH]  python=PASS:REJECT[CROSS_SUITE_MISMATCH]
   composition/aim-did-rfc9421/delegation-chain-3link.json      node=PASS:ACCEPT  python=PASS:ACCEPT
+  composition/aim-did-rfc9421/delegation-chain-depth-exceeded.json node=PASS:REJECT[DEPTH_EXCEEDED]  python=PASS:REJECT[DEPTH_EXCEEDED]
+  composition/aim-did-rfc9421/delegation-chain-expiry-extended.json node=PASS:REJECT[EXPIRY_EXTENDED]  python=PASS:REJECT[EXPIRY_EXTENDED]
+  composition/aim-did-rfc9421/delegation-chain-issuer-not-delegate.json node=PASS:REJECT[CHAIN_BROKEN]  python=PASS:REJECT[CHAIN_BROKEN]
+  composition/aim-did-rfc9421/delegation-chain-leaf-not-signer.json node=PASS:REJECT[CHAIN_BROKEN]  python=PASS:REJECT[CHAIN_BROKEN]
+  composition/aim-did-rfc9421/delegation-chain-link-replaced.json node=PASS:REJECT[LINK_SIGNATURE_INVALID]  python=PASS:REJECT[LINK_SIGNATURE_INVALID]
+  composition/aim-did-rfc9421/delegation-chain-link-tampered.json node=PASS:REJECT[LINK_SIGNATURE_INVALID]  python=PASS:REJECT[LINK_SIGNATURE_INVALID]
+  composition/aim-did-rfc9421/delegation-chain-request-out-of-scope.json node=PASS:REJECT[REQUEST_OUT_OF_SCOPE]  python=PASS:REJECT[REQUEST_OUT_OF_SCOPE]
+  composition/aim-did-rfc9421/delegation-chain-root-tampered.json node=PASS:REJECT[LINK_SIGNATURE_INVALID]  python=PASS:REJECT[LINK_SIGNATURE_INVALID]
+  composition/aim-did-rfc9421/delegation-chain-scope-widened.json node=PASS:REJECT[SCOPE_WIDENED]  python=PASS:REJECT[SCOPE_WIDENED]
   composition/aim-did-rfc9421/key-substituted.json             node=PASS:REJECT[SIGNATURE_INVALID]  python=PASS:REJECT[SIGNATURE_INVALID]
   composition/aim-did-rfc9421/signature-alone.json             node=PASS:ACCEPT  python=PASS:ACCEPT
   composition/aim-did-rfc9421/signature-tag-absent.json        node=PASS:ACCEPT  python=PASS:ACCEPT

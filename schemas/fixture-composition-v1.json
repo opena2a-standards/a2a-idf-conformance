@@ -70,7 +70,21 @@
         "signature": { "type": "string" },
         "signatureBase64": { "type": "string" },
         "verifyResult": { "enum": ["ACCEPT", "REJECT"], "default": "ACCEPT" },
-        "rejectCategory": { "enum": ["TAG_MISMATCH", "SIGNATURE_INVALID", "CROSS_SUITE_MISMATCH"] }
+        "rejectCategory": {
+          "enum": [
+            "TAG_MISMATCH",
+            "SIGNATURE_INVALID",
+            "CROSS_SUITE_MISMATCH",
+            "DEPTH_EXCEEDED",
+            "CHAIN_BROKEN",
+            "LINK_SIGNATURE_INVALID",
+            "SCOPE_WIDENED",
+            "EXPIRY_EXTENDED",
+            "REQUEST_OUT_OF_SCOPE",
+            "RECEIPT_SIGNATURE_INVALID",
+            "RECEIPT_MISMATCH"
+          ]
+        }
       },
       "if": { "required": ["verifyResult"], "properties": { "verifyResult": { "const": "REJECT" } } },
       "then": { "required": ["rejectCategory"] }
@@ -80,6 +94,51 @@
       "properties": {
         "envoys": { "type": "object" }
       }
+    },
+    "envelope": {
+      "type": "object",
+      "required": ["type", "keyidResolutions"],
+      "properties": {
+        "type": { "enum": ["aps-delegation-chain-v1", "aps-bilateral-receipt-v1"] },
+        "keyidResolutions": { "type": "object" }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "aps-delegation-chain-v1" } } },
+          "then": {
+            "required": ["depth", "maxDepth", "links"],
+            "properties": {
+              "depth": { "type": "integer" },
+              "maxDepth": { "type": "integer" },
+              "links": { "type": "array" }
+            }
+          }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "aps-bilateral-receipt-v1" } } },
+          "then": {
+            "required": ["request", "response"],
+            "properties": {
+              "request": {
+                "type": "object",
+                "required": ["initiatorKeyid"],
+                "properties": { "initiatorKeyid": { "type": "string" } }
+              },
+              "response": {
+                "type": "object",
+                "required": ["responderKeyid", "respondedAt", "status", "receiptPayloadJcs", "responderSignatureBase64"],
+                "properties": {
+                  "responderKeyid": { "type": "string" },
+                  "respondedAt": { "type": "string" },
+                  "status": { "type": "string" },
+                  "receiptPayloadJcs": { "type": "object" },
+                  "responderSignatureBase64": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

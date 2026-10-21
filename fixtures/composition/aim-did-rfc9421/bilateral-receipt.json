@@ -1,7 +1,7 @@
 {
   "$schema": "https://a2a-idf.opena2a.org/schemas/fixture-composition-v1.json",
   "name": "aim-did-rfc9421/bilateral-receipt",
-  "description": "A2A-IDF identity-framework wrap of an Envoys §14 Vector 2 wire signature (POST /api/task with a JSON body) inside an APS bilateral-receipt envelope. The initiator's wire signature is byte-identical to Envoys §14 Vector 2 by construction (the envelope does not re-sign the wire request). The envelope adds a responder acknowledgment over a JCS-canonical receipt payload referencing the initiator's wire signature. The conformance verifier checks the wire layer (RFC 9421 + A2A-IDF §6 dual-shape keyid resolution); deeper envelope verification (responder signature over the JCS receipt) is a planned extension.",
+  "description": "A2A-IDF identity-framework wrap of an Envoys §14 Vector 2 wire signature (POST /api/task with a JSON body) inside an APS bilateral-receipt envelope. The initiator's wire signature is byte-identical to Envoys §14 Vector 2 by construction (the envelope does not re-sign the wire request). The envelope adds a responder acknowledgment: the responder's Ed25519 signature over the JCS-canonical receipt payload, which names the initiator's wire signature. Both reference verifiers check the wire layer (RFC 9421 + A2A-IDF §6 dual-shape keyid resolution) and then the envelope: the responder signature over the receipt payload, and that the payload acknowledges this request's signature and initiator and matches the response members beside it.",
   "spec": [
     {
       "id": "A2A-IDF",
@@ -41,12 +41,18 @@
       "section": "§7.1 Test 1 (Ed25519 keypair)"
     },
     {
+      "id": "RFC 8032",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+      "section": "§7.1 Test 2 (responder Ed25519 keypair)"
+    },
+    {
       "id": "W3C DID Core v1.0",
       "ref": "https://www.w3.org/TR/did-core/",
       "section": "§5.2 Verification Methods"
     }
   ],
   "keypairRef": "../../../vectors/rfc8032-7-1.json",
+  "counterpartyKeypairRef": "../../../vectors/rfc8032-7-1-test2.json",
   "input": {
     "method": "POST",
     "path": "/api/task",
@@ -136,12 +142,37 @@
         "responderKeyid": "did:web:counterparty.example:agents:receipt-test",
         "status": "ACCEPTED"
       },
-      "responderSignatureNote": "Responder signs the RFC 8785 JCS-canonical form of receiptPayloadJcs using its own keyid. The signature is intentionally omitted here because the responder keypair is illustrative; the fixture's verification scope is the wire layer per A2A-IDF §6. Deeper envelope verification lands in a future suite iteration once APS receipt schemas stabilize."
+      "responderSignatureBase64": "Poe/DZqkaekGP2lzOHPbWqLAz37hbRhCRp0XL0yKY9JiVwWV6GE8IfuWJwNi+1XswecOIYRaQzhAJ5saKRrcCw=="
+    },
+    "keyidResolutions": {
+      "did:web:counterparty.example:agents:receipt-test": {
+        "shape": "did-json",
+        "contentType": "application/did+json",
+        "document": {
+          "@context": [
+            "https://www.w3.org/ns/did/v1",
+            "https://w3id.org/security/suites/ed25519-2020/v1"
+          ],
+          "id": "did:web:counterparty.example:agents:receipt-test",
+          "verificationMethod": [
+            {
+              "id": "did:web:counterparty.example:agents:receipt-test#key-1",
+              "type": "Ed25519VerificationKey2020",
+              "controller": "did:web:counterparty.example:agents:receipt-test",
+              "publicKeyMultibase": "z6MkiaMbhXHNA4eJVCCj8dbzKzTgYDKf6crKgHVHid1F1WCT"
+            }
+          ],
+          "assertionMethod": [
+            "did:web:counterparty.example:agents:receipt-test#key-1"
+          ]
+        }
+      }
     },
     "conformanceNotes": [
       "Wire signature (Envoys §14 Vector 2) is byte-identical to a non-enveloped request signed with the same keypair and params.",
       "The envelope changes the framework-layer interpretation (a bilateral receipt is a bound request+response pair) but not the wire-layer bytes.",
-      "A2A-IDF §6 dual-shape keyid resolution applies independently to initiator and responder keyids."
+      "responderSignatureBase64 is the responder's Ed25519 signature, in base64, over the UTF-8 bytes of the RFC 8785 JCS form of receiptPayloadJcs, whose initiatorSignatureBase64 is the wire signature the receipt acknowledges.",
+      "A2A-IDF §6 dual-shape keyid resolution applies independently to initiator and responder keyids: the initiator keyid resolves through keyidResolution and the responder keyid through envelope.keyidResolutions, to the RFC 8032 §7.1 Test 2 key."
     ]
   }
 }

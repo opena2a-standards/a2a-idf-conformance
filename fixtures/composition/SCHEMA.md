@@ -26,7 +26,8 @@ The canonical reference fixture is [`aim-did-rfc9421/signature-alone.json`](./ai
     "verifyResult":     "ACCEPT"
   },
 
-  "crossSuiteEquivalence": { /* optional, see below */ }
+  "crossSuiteEquivalence": { /* optional, see below */ },
+  "envelope":              { /* optional, see below */ }
 }
 ```
 
@@ -118,7 +119,7 @@ Use when the `keyid` URL would return a W3C DID Document at `application/did+jso
 | `signature` | yes | RFC 9421 `Signature` header value: `sig1=:<base64>:`. |
 | `signatureBase64` | yes | The base64 signature, naked (no `sig1=:` wrapping). Informational: verifiers MUST NOT use it for the `crossSuiteEquivalence` byte-match, which compares the bytes parsed from `signature`. The `cross-suite-mismatch` negative fixture sets it to a value that differs from `signature` to catch a verifier that does. |
 | `verifyResult` | no | `ACCEPT` (default) or `REJECT`. Use `REJECT` for negative-path fixtures asserting that a particular malformation must be rejected. |
-| `rejectCategory` | REJECT fixtures | Machine-readable reject category the verifier must observe. At the wire layer three categories are modeled. `TAG_MISMATCH`: the signature carries a `tag` other than `a2a-message` (see the tag rule above). `SIGNATURE_INVALID`: tampered signature bytes, a substituted key, and a tampered body (content-digest is a signed component) all surface as an Ed25519 verification failure against the resolved key. `CROSS_SUITE_MISMATCH`: the signature verifies, but the fixture declares `crossSuiteEquivalence.envoys.byteIdentical: true` and the verified signature bytes are not the pinned vector (see below). A negative fixture must be valid at every stage before its pinned check (digest, base, Signature-Input, then the tag rule, then key extraction), so a verifier that rejects for the wrong reason fails the fixture. `signature-tag-foreign.json` carries a signature that verifies, so a verifier that ignores the tag accepts it and fails. `signature-tag-foreign-tampered.json` is the one fixture with a second defect after its pinned check (an altered signature), so a verifier that checks the signature before the tag reports `SIGNATURE_INVALID` and fails. |
+| `rejectCategory` | REJECT fixtures | Machine-readable reject category the verifier must observe. At the wire layer three categories are modeled. `TAG_MISMATCH`: the signature carries a `tag` other than `a2a-message` (see the tag rule above). `SIGNATURE_INVALID`: tampered signature bytes, a substituted key, and a tampered body (content-digest is a signed component) all surface as an Ed25519 verification failure against the resolved key. `CROSS_SUITE_MISMATCH`: the signature verifies, but the fixture declares `crossSuiteEquivalence.envoys.byteIdentical: true` and the verified signature bytes are not the pinned vector (see below). A negative fixture must be valid at every stage before its pinned check (digest, base, Signature-Input, then the tag rule, then key extraction), so a verifier that rejects for the wrong reason fails the fixture. `signature-tag-foreign.json` carries a signature that verifies, so a verifier that ignores the tag accepts it and fails. `signature-tag-foreign-tampered.json` is the one fixture with a second defect after its pinned check (an altered signature), so a verifier that checks the signature before the tag reports `SIGNATURE_INVALID` and fails. The envelope adds eight categories, described under [`envelope`](#envelope-optional): `DEPTH_EXCEEDED`, `CHAIN_BROKEN`, `LINK_SIGNATURE_INVALID`, `SCOPE_WIDENED`, `EXPIRY_EXTENDED` and `REQUEST_OUT_OF_SCOPE` for a delegation chain, and `RECEIPT_SIGNATURE_INVALID` and `RECEIPT_MISMATCH` for a bilateral receipt. A negative envelope fixture carries a request that the wire layer accepts. |
 
 ### Exact `signatureBase` format
 
@@ -147,6 +148,77 @@ Declare a byte-match relationship with another conformance suite's published vec
 ```
 
 When `byteIdentical: true` and the signature verifies, the verifier base64-encodes the signature bytes it parsed from `expected.signature` (the bytes it just verified) and asserts that they match `expectedSignatureBase64` exactly; otherwise it rejects with `CROSS_SUITE_MISMATCH`. It never reads `expected.signatureBase64` for this check. `byteIdentical: true` without an `expectedSignatureBase64` that is a non-empty string is a malformed fixture: both verifiers report it as `FAIL` at stage `cross-suite-equivalence` rather than skipping the comparison. A `crossSuiteEquivalence` or `crossSuiteEquivalence.envoys` value that is present but is not a JSON object (a string, an array, `null`) is malformed too: both verifiers report it as `FAIL` at stage `schema`, before any other check, rather than reading it as an absent block. This is the core interop claim of A2A-IDF §6: dual-shape `keyid` resolution does not change the signed bytes.
+
+## `envelope` (optional)
+
+A fixture may wrap its request in an [APS](https://github.com/a2aproject/A2A/issues/1575) envelope: a delegation chain (`"type": "aps-delegation-chain-v1"`, A2A-IDF §7) or a bilateral receipt (`"type": "aps-bilateral-receipt-v1"`, A2A-IDF §8). Both reference verifiers check the envelope after the wire layer has accepted the request, so a wire-layer reject is the verdict whatever the envelope holds.
+
+Every envelope carries `keyidResolutions`, an object from each keyid the envelope needs a key for to its resolution, in either shape described under [`keyidResolution`](#keyidresolution). `signatureParams.keyid` resolves through the fixture's own `keyidResolution` only, and an entry for it in `keyidResolutions` fails the fixture at stage `envelope`. An envelope signature is an Ed25519 signature in base64 (RFC 4648 §4, padded) over the UTF-8 bytes of the RFC 8785 JCS form of the payload it signs; text that is not exactly the base64 encoding of 64 bytes does not verify. A member the checks cannot read fails the fixture at stage `envelope`, as an unusable key fails it at stage `public-key-extraction`.
+
+### Delegation chain
+
+```jsonc
+{
+  "type": "aps-delegation-chain-v1",
+  "depth": 3,                // the number of links
+  "maxDepth": 4,             // the most links the verifier accepts
+  "links": [
+    {
+      "index": 0,
+      "type": "root",        // "derived" for every link after the first
+      "issuerKeyid": "https://envoys.me/agents/test@rfc8032-vec1.example",
+      "subjectKeyid": "did:web:counterparty.example:agents:delegate-level-1",
+      "scope": ["POST /api/echo", "POST /api/health", "GET /api/health"],
+      "issuedAt": "2026-05-01T00:00:00Z",
+      "expiresAt": "2026-12-31T00:00:00Z",
+      "signature": "<base64>"
+      // a derived link also carries "previousSignatureRef": "links[<i-1>].signature"
+    }
+  ],
+  "keyidResolutions": { "did:web:counterparty.example:agents:delegate-level-1": { "shape": "did-json", ... } }
+}
+```
+
+The issuer of a link signs the JCS form of `{type, issuerKeyid, subjectKeyid, scope, issuedAt, expiresAt}`, plus, for a derived link, `previousSignature`: the `signature` of the link before it. A scope entry names a request as its method, a space and its path. The checks run in this order, and the first that fails decides:
+
+1. The chain can be read, or the fixture fails at stage `envelope`: `links` is not empty and `depth` is its length, and each link in turn is an object whose `index` is its position and whose `type` is `root` for the first link and `derived` after it, with a non-empty string `issuerKeyid` and `subjectKeyid`, a `scope` array of strings, an `issuedAt` and an `expiresAt` of the form `YYYY-MM-DDTHH:MM:SSZ`, a `previousSignatureRef` of `links[<i-1>].signature` on a derived link, a string `signature`, no lone surrogate, and an `issuerKeyid` that resolves to a key.
+2. `DEPTH_EXCEEDED`: the chain has more links than `maxDepth`.
+3. For each link from the root: `CHAIN_BROKEN` when a derived link's `issuerKeyid` is not the `subjectKeyid` of the link before it, `LINK_SIGNATURE_INVALID` when the link's signature does not verify with its issuer's key, `SCOPE_WIDENED` when a derived link's `scope` holds an entry that the scope before it does not, and `EXPIRY_EXTENDED` when a derived link's `expiresAt` is later than the one before it.
+4. `CHAIN_BROKEN`: the `subjectKeyid` of the last link is not `signatureParams.keyid`, the key that signed the request.
+5. `REQUEST_OUT_OF_SCOPE`: the `scope` of the last link does not hold the request, its method in upper case, a space and its path.
+
+### Bilateral receipt
+
+```jsonc
+{
+  "type": "aps-bilateral-receipt-v1",
+  "request": { "initiatorKeyid": "https://envoys.me/agents/test@rfc8032-vec1.example", ... },
+  "response": {
+    "responderKeyid": "did:web:counterparty.example:agents:receipt-test",
+    "respondedAt": "2026-05-13T13:31:02Z",
+    "status": "ACCEPTED",
+    "receiptPayloadJcs": {
+      "initiatorSignatureBase64": "<the signature of the request>",
+      "initiatorKeyid": "https://envoys.me/agents/test@rfc8032-vec1.example",
+      "respondedAt": "2026-05-13T13:31:02Z",
+      "responderKeyid": "did:web:counterparty.example:agents:receipt-test",
+      "status": "ACCEPTED"
+    },
+    "responderSignatureBase64": "<base64>"
+  },
+  "keyidResolutions": { "did:web:counterparty.example:agents:receipt-test": { "shape": "did-json", ... } }
+}
+```
+
+The responder signs the JCS form of `receiptPayloadJcs` with the key of its `responderKeyid`. The checks run in this order:
+
+1. The receipt can be read, or the fixture fails at stage `envelope`: the five members of `receiptPayloadJcs` shown above are strings, `receiptPayloadJcs` holds only strings, arrays and objects and no lone surrogate, and its `responderKeyid` resolves to a key.
+2. `RECEIPT_SIGNATURE_INVALID`: `responderSignatureBase64` does not verify over `receiptPayloadJcs`.
+3. `RECEIPT_MISMATCH`, in this order: `receiptPayloadJcs.initiatorSignatureBase64` is not the base64 of the signature bytes the wire layer verified; `receiptPayloadJcs.initiatorKeyid`, then `request.initiatorKeyid`, is not `signatureParams.keyid`; `response.responderKeyid`, `response.respondedAt` or `response.status` differs from the member of that name in `receiptPayloadJcs`.
+
+The schema stage checks the members it can: an `envelope` that is present is an object with a `type` named above and an object `keyidResolutions`; a delegation chain has integer `depth` and `maxDepth` and an array `links`, and a bilateral receipt has a `request` with a string `initiatorKeyid` and a `response` with the string `responderKeyid`, `respondedAt`, `status` and `responderSignatureBase64` and the object `receiptPayloadJcs`.
+
+Neither verifier compares `issuedAt`, `expiresAt` or `respondedAt` with a clock: the fixtures pin no verification time, and `conformance.json` lists that under `notCovered`.
 
 ## Reproducibility checklist
 

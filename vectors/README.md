@@ -20,13 +20,16 @@ byte-identical signatures with the wire-format layer.
 
 ### `rfc8032-7-1-test2.json`
 
-The Ed25519 keypair from RFC 8032 §7.1 Test 2. Two roles:
+The Ed25519 keypair from RFC 8032 §7.1 Test 2. Three roles:
 
 - the trust-registry **issuer key** signing the Level 2 organization
   attestations in [`fixtures/levels/`](../fixtures/levels/)
 - the **substituted key** in the
   [`key-substituted.json`](../fixtures/composition/aim-did-rfc9421/key-substituted.json)
   negative fixture
+- the **counterparty key** of the `did:web:counterparty.example` agents that
+  sign the derived delegation-chain links and the bilateral receipts in
+  [`fixtures/composition/aim-did-rfc9421/`](../fixtures/composition/aim-did-rfc9421/)
 
 Both keypairs are published in RFC 8032 itself and are for cross-implementation
 verification only. They MUST NOT be used to sign anything in any production

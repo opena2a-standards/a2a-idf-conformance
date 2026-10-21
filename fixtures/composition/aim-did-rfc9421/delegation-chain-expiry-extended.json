@@ -1,0 +1,230 @@
+{
+  "$schema": "https://a2a-idf.opena2a.org/schemas/fixture-composition-v1.json",
+  "name": "aim-did-rfc9421/delegation-chain-expiry-extended",
+  "description": "Negative fixture: the delegation-chain-3link chain with the expiresAt of the last link set to 2099-01-01T00:00:00Z, signed by its issuer. Every link verifies, but the last link expires after the link before it (2026-09-30T00:00:00Z). A conforming A2A-IDF verifier MUST reject it (EXPIRY_EXTENDED).",
+  "spec": [
+    {
+      "id": "A2A-IDF",
+      "ref": "https://github.com/a2aproject/A2A/pull/1496",
+      "section": "§6 Public-key resolution (dual-shape) and §7 Delegation chains"
+    },
+    {
+      "id": "APS",
+      "ref": "https://github.com/a2aproject/A2A/issues/1575",
+      "section": "Delegation chain envelopes"
+    },
+    {
+      "id": "Envoys signature/v1",
+      "ref": "https://envoys.me/specs/signature/v1",
+      "version": "1.5.1",
+      "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+      "section": "§14 Vector 3 (POST request, empty JSON object body)"
+    },
+    {
+      "id": "RFC 9421",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+      "section": "§2.5 Creating the Signature Base"
+    },
+    {
+      "id": "RFC 9530",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+      "section": "Content-Digest header field"
+    },
+    {
+      "id": "RFC 8785",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+      "section": "JCS canonical form (per-link payload)"
+    },
+    {
+      "id": "RFC 8032",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+      "section": "§7.1 Test 1 (Ed25519 keypair)"
+    },
+    {
+      "id": "RFC 8032",
+      "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+      "section": "§7.1 Test 2 (delegate Ed25519 keypair)"
+    },
+    {
+      "id": "W3C DID Core v1.0",
+      "ref": "https://www.w3.org/TR/did-core/",
+      "section": "§5.2 Verification Methods"
+    }
+  ],
+  "keypairRef": "../../../vectors/rfc8032-7-1.json",
+  "counterpartyKeypairRef": "../../../vectors/rfc8032-7-1-test2.json",
+  "input": {
+    "method": "POST",
+    "path": "/api/echo",
+    "body": "{}",
+    "bodyEncoding": "utf-8"
+  },
+  "signatureParams": {
+    "components": [
+      "@method",
+      "@path",
+      "content-digest"
+    ],
+    "keyid": "https://envoys.me/agents/test@rfc8032-vec1.example",
+    "created": 1714000120,
+    "nonce": "ICEiIyQlJicoKSorLC0uLw"
+  },
+  "keyidResolution": {
+    "shape": "did-json",
+    "contentType": "application/did+json",
+    "document": {
+      "@context": [
+        "https://www.w3.org/ns/did/v1",
+        "https://w3id.org/security/suites/ed25519-2020/v1"
+      ],
+      "id": "did:web:envoys.me:agents:test%40rfc8032-vec1.example",
+      "verificationMethod": [
+        {
+          "id": "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1",
+          "type": "Ed25519VerificationKey2020",
+          "controller": "did:web:envoys.me:agents:test%40rfc8032-vec1.example",
+          "publicKeyMultibase": "z6MktwupdmLXVVqTzCw4i46r4uGyosGXRnR3XjN4Zq7oMMsw"
+        },
+        {
+          "id": "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-2",
+          "type": "JsonWebKey2020",
+          "controller": "did:web:envoys.me:agents:test%40rfc8032-vec1.example",
+          "publicKeyJwk": {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
+          }
+        }
+      ],
+      "assertionMethod": [
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1",
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-2"
+      ],
+      "authentication": [
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-1",
+        "did:web:envoys.me:agents:test%40rfc8032-vec1.example#key-2"
+      ]
+    }
+  },
+  "expected": {
+    "contentDigest": "sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:",
+    "signatureBase": "\"@method\": POST\n\"@path\": /api/echo\n\"content-digest\": sha-256=:RBNvo1WzZ4oRRq0W9+hknpT7T8If536DEMBg9hyq/4o=:\n\"@signature-params\": (\"@method\" \"@path\" \"content-digest\");keyid=\"https://envoys.me/agents/test@rfc8032-vec1.example\";created=1714000120;nonce=\"ICEiIyQlJicoKSorLC0uLw\"",
+    "signatureInput": "sig1=(\"@method\" \"@path\" \"content-digest\");keyid=\"https://envoys.me/agents/test@rfc8032-vec1.example\";created=1714000120;nonce=\"ICEiIyQlJicoKSorLC0uLw\"",
+    "signature": "sig1=:m2besJKk6Q0MIwFoTENobvvHxFan1fUTv7bzY4EB6OjfIlktqwKa7r/Ab0tDDWFGjQ0CbALgvWGcQfzDr/GeBQ==:",
+    "signatureBase64": "m2besJKk6Q0MIwFoTENobvvHxFan1fUTv7bzY4EB6OjfIlktqwKa7r/Ab0tDDWFGjQ0CbALgvWGcQfzDr/GeBQ==",
+    "verifyResult": "REJECT",
+    "rejectCategory": "EXPIRY_EXTENDED"
+  },
+  "crossSuiteEquivalence": {
+    "envoys": {
+      "vector": "§14 Vector 3",
+      "expectedSignatureBase64": "m2besJKk6Q0MIwFoTENobvvHxFan1fUTv7bzY4EB6OjfIlktqwKa7r/Ab0tDDWFGjQ0CbALgvWGcQfzDr/GeBQ==",
+      "byteIdentical": true,
+      "note": "Wire signature is unchanged when wrapped in a delegation chain envelope. The chain context is framework-layer metadata; the wire bytes remain those of Envoys §14 Vector 3."
+    }
+  },
+  "envelope": {
+    "type": "aps-delegation-chain-v1",
+    "version": "draft-2026-05-13",
+    "ref": "https://github.com/a2aproject/A2A/issues/1575",
+    "depth": 3,
+    "maxDepth": 4,
+    "links": [
+      {
+        "index": 0,
+        "type": "root",
+        "issuerKeyid": "https://envoys.me/agents/test@rfc8032-vec1.example",
+        "subjectKeyid": "did:web:counterparty.example:agents:delegate-level-1",
+        "scope": [
+          "POST /api/echo",
+          "POST /api/health",
+          "GET /api/health"
+        ],
+        "issuedAt": "2026-05-01T00:00:00Z",
+        "expiresAt": "2026-12-31T00:00:00Z",
+        "signature": "7bI+nyEZf4H3jPf0rmeV0yNWh2vwmdKwYibhJVBPv26/rhrCsrbYAzzn3KrF0Z5Re5mzXsm7WEHrjGCBiUMkBw==",
+        "linkPayloadJcsNote": "JCS canonical form of {issuerKeyid, subjectKeyid, scope, issuedAt, expiresAt, type:'root'} signed by the issuer."
+      },
+      {
+        "index": 1,
+        "type": "derived",
+        "issuerKeyid": "did:web:counterparty.example:agents:delegate-level-1",
+        "subjectKeyid": "did:web:counterparty.example:agents:delegate-level-2",
+        "scope": [
+          "POST /api/echo",
+          "POST /api/health"
+        ],
+        "issuedAt": "2026-05-05T00:00:00Z",
+        "expiresAt": "2026-09-30T00:00:00Z",
+        "previousSignatureRef": "links[0].signature",
+        "signature": "dStPkg7SL41INn6iYPpMt5zJXNJf73ZfRQ81YxOIkpuQ+fqdhXcsJsOR4lX/QhkCWfVP5IlWpaOxoiZYvPBLAg==",
+        "linkPayloadJcsNote": "JCS canonical form of {issuerKeyid, subjectKeyid, scope, issuedAt, expiresAt, previousSignature, type:'derived'} signed by the issuer."
+      },
+      {
+        "index": 2,
+        "type": "derived",
+        "issuerKeyid": "did:web:counterparty.example:agents:delegate-level-2",
+        "subjectKeyid": "https://envoys.me/agents/test@rfc8032-vec1.example",
+        "scope": [
+          "POST /api/echo"
+        ],
+        "issuedAt": "2026-05-10T00:00:00Z",
+        "expiresAt": "2099-01-01T00:00:00Z",
+        "previousSignatureRef": "links[1].signature",
+        "signature": "K8dUxKy6Y6izrHJWPX3A3uOws00rDcAlrI0LFrqcvTUNN4+Ywj+eCjBAEXyCw6x/EJ+tq3wvzyxqrB325m9+Ag==",
+        "linkPayloadJcsNote": "JCS canonical form of {issuerKeyid, subjectKeyid, scope, issuedAt, expiresAt, previousSignature, type:'derived'} signed by the issuer."
+      }
+    ],
+    "keyidResolutions": {
+      "did:web:counterparty.example:agents:delegate-level-1": {
+        "shape": "did-json",
+        "contentType": "application/did+json",
+        "document": {
+          "@context": [
+            "https://www.w3.org/ns/did/v1",
+            "https://w3id.org/security/suites/ed25519-2020/v1"
+          ],
+          "id": "did:web:counterparty.example:agents:delegate-level-1",
+          "verificationMethod": [
+            {
+              "id": "did:web:counterparty.example:agents:delegate-level-1#key-1",
+              "type": "Ed25519VerificationKey2020",
+              "controller": "did:web:counterparty.example:agents:delegate-level-1",
+              "publicKeyMultibase": "z6MkiaMbhXHNA4eJVCCj8dbzKzTgYDKf6crKgHVHid1F1WCT"
+            }
+          ],
+          "assertionMethod": [
+            "did:web:counterparty.example:agents:delegate-level-1#key-1"
+          ]
+        }
+      },
+      "did:web:counterparty.example:agents:delegate-level-2": {
+        "shape": "did-json",
+        "contentType": "application/did+json",
+        "document": {
+          "@context": [
+            "https://www.w3.org/ns/did/v1",
+            "https://w3id.org/security/suites/ed25519-2020/v1"
+          ],
+          "id": "did:web:counterparty.example:agents:delegate-level-2",
+          "verificationMethod": [
+            {
+              "id": "did:web:counterparty.example:agents:delegate-level-2#key-1",
+              "type": "Ed25519VerificationKey2020",
+              "controller": "did:web:counterparty.example:agents:delegate-level-2",
+              "publicKeyMultibase": "z6MkiaMbhXHNA4eJVCCj8dbzKzTgYDKf6crKgHVHid1F1WCT"
+            }
+          ],
+          "assertionMethod": [
+            "did:web:counterparty.example:agents:delegate-level-2#key-1"
+          ]
+        }
+      }
+    },
+    "conformanceNotes": [
+      "Wire signature (Envoys §14 Vector 3) is byte-identical to a non-enveloped request signed with the same keypair and params.",
+      "Each link's signature is its issuer's Ed25519 signature, in base64, over the UTF-8 bytes of the RFC 8785 JCS form of the payload its linkPayloadJcsNote names. previousSignature is the signature member of the link before it, so a derived link is bound to the link it was issued under.",
+      "The wire keyid resolves through keyidResolution and each other issuer keyid through envelope.keyidResolutions. The counterparty.example keyids resolve to the RFC 8032 §7.1 Test 2 key."
+    ]
+  }
+}
