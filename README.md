@@ -2,7 +2,7 @@
 
 Canonical conformance suite for the **A2A-IDF** (Agent-to-Agent Identity Framework) specification proposed in [a2aproject/A2A#1496](https://github.com/a2aproject/A2A/pull/1496).
 
-The suite is intentionally narrow: it covers the identity-framework layer (verification levels, attestation array shape, message-signing wire format, delegation chain and bilateral receipt envelope shapes (unverified)) and composes with adjacent conformance suites for the wire signature layer ([#1829](https://github.com/a2aproject/A2A/issues/1829)) and the delegation/continuity layer ([#1575](https://github.com/a2aproject/A2A/issues/1575) APS). The identity-claim envelope layer (CTEF) is not yet composed ([Coverage](./docs/coverage.md#status)).
+The suite is intentionally narrow: it covers the identity-framework layer (verification levels, attestation array shape, message-signing wire format, delegation chain and bilateral receipt envelopes) and composes with adjacent conformance suites for the wire signature layer ([#1829](https://github.com/a2aproject/A2A/issues/1829)) and the delegation/continuity layer ([#1575](https://github.com/a2aproject/A2A/issues/1575) APS). The identity-claim envelope layer (CTEF) is not yet composed ([Coverage](./docs/coverage.md#status)).
 
 ## Testing an implementation
 
@@ -34,7 +34,7 @@ Wrap your implementation in a command that takes a fixtures directory, evaluates
 pipx run --spec git+https://github.com/opena2a-standards/a2a-idf-conformance a2a-idf-conformance --verifier mylib="node ../mylib/conformance.js"
 ```
 
-The gate runs it beside both reference verifiers and reports `PARITY: PASS` only when every implementation agrees on every fixture and matches the outcome pinned in the fixture; otherwise it reports `PARITY: FAIL` and exits 1. The full input and output contract is in [`scripts/README.md`](./scripts/README.md#testing-another-implementation).
+The gate runs it beside both reference verifiers and reports `PARITY: PASS` only when every implementation agrees on every fixture and matches the outcome pinned in the fixture; otherwise it reports `PARITY: FAIL` and exits 1. The full input and output contract is in [Testing another implementation](./docs/testing-another-implementation.md).
 
 To change the suite, for example to add a fixture or to run the tooling tests, run the gate from a clone:
 
@@ -82,9 +82,12 @@ Three shapes per fixture, pinned to the RFC 8032 §7.1 keypair:
 2. Signature wrapped in a bilateral receipt envelope
 3. Signature wrapped in a 3-link delegation chain
 
-The reference verifiers check the wire signature in all three shapes.
+The reference verifiers check the wire signature in all three shapes, and then the envelope:
 
-The envelopes are pinned as data only: the chain links and the receipt carry no signatures, and neither verifier reads the `envelope` block, so a chain whose scope widens or whose expiry increases is still accepted. Envelope verification is listed under `notCovered` in [`conformance.json`](./conformance.json).
+- **Delegation chain:** each link carries its issuer's Ed25519 signature over the RFC 8785 JCS form of the link, bound to the signature of the link before it. The verifiers check the number of links against `maxDepth`, that each link's issuer is the subject of the link before it, each link's signature, that each scope is a subset of the one before it and no expiry is later than the one before it, and that the last link delegates to the key that signed the request with a scope that grants it.
+- **Bilateral receipt:** the verifiers check the responder's Ed25519 signature over the JCS form of the receipt payload, and that the payload names the signature and keyid of this request and the responder, response time and status the envelope states.
+
+Twelve negative fixtures each carry one envelope defect ([table](./fixtures/composition/aim-did-rfc9421/README.md#shapes)): nine break one of the chain checks, and three break the responder's signature, the request signature the payload names, or the status the envelope states. No fixture breaks the request keyid, which the payload and `envelope.request` both name, or the responder and response time the envelope states; a test in [`scripts/test/verify.test.mjs`](./scripts/test/verify.test.mjs) checks that both reference verifiers reject each of those four as `RECEIPT_MISMATCH`.
 
 These shapes parallel the `envoys-rfc9421/` fixtures hosted in `aeoess/aps-conformance-suite` so that any verifier passing both suites can demonstrate cross-implementation byte-match.
 

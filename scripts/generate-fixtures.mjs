@@ -18,6 +18,10 @@
 // signature bytes are stable across runs and platforms.
 //
 // Usage:  node scripts/generate-fixtures.mjs
+//         node scripts/generate-fixtures.mjs --help
+// The generator takes no arguments, and reads them before it builds or writes
+// anything: --help (or -h) prints the usage and exits 0, and any other
+// argument is a usage error, exit 2. Neither writes a file.
 
 import {
   createHash,
@@ -31,6 +35,34 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+// --- arguments -------------------------------------------------------------------
+
+const USAGE = "usage: node generate-fixtures.mjs";
+const HELP = [
+  USAGE,
+  "Writes the fixtures and vectors this script owns, then MANIFEST.sha256. Takes no arguments.",
+  "Exit code: 0 when the files are written, 2 for a usage error.",
+].join("\n");
+
+// Called before FILES is built, so --help and a usage error write nothing. The
+// argument is printed with its control characters escaped, as verify.mjs prints
+// an unknown option: it can be a file name a shell pattern expanded to.
+function readArguments(args) {
+  for (const arg of args) {
+    if (arg === "--help" || arg === "-h") {
+      console.log(HELP);
+      process.exit(0);
+    }
+    const kind = arg.startsWith("-") && arg !== "-" ? "unknown option" : "unexpected argument";
+    const shown = arg.replace(/[\u0000-\u001f\u007f-\u009f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+    console.error(USAGE);
+    console.error(`generate-fixtures.mjs: ${kind}: ${shown}`);
+    process.exit(2);
+  }
+}
+
+readArguments(process.argv.slice(2));
 
 // --- RFC 8032 §7.1 test seeds (published in the RFC; test-only) ---------------
 
@@ -140,8 +172,9 @@ function contentDigestOf(body) {
 }
 
 // --- minimal RFC 8785 (JCS) for the restricted value domain used here ----------
-// Fixture attestations contain only objects, arrays, and strings (no numbers,
-// booleans, or null), for which sorted-key compact JSON is exactly the JCS
+// Fixture attestations and the signed envelope payloads (delegation-chain
+// links, bilateral receipts) contain only objects, arrays, and strings (no
+// numbers, booleans, or null), for which sorted-key compact JSON is exactly the JCS
 // canonical form. Property names sort by UTF-16 code units (RFC 8785 §3.2.3),
 // which is what Array.prototype.sort() does by default; keys outside the BMP
 // are therefore in scope. Keep fixture content inside that domain.
@@ -161,6 +194,7 @@ function jcs(value) {
 const KEYID = "https://envoys.me/agents/test@rfc8032-vec1.example";
 const DID_ID = "did:web:envoys.me:agents:test%40rfc8032-vec1.example";
 const KEYPAIR_REF = "../../../vectors/rfc8032-7-1.json";
+const TEST2_KEYPAIR_REF = "../../../vectors/rfc8032-7-1-test2.json";
 
 function didDocument(multibase, jwkX) {
   return {
@@ -264,6 +298,191 @@ function expectedBlock(input, params, signWith, { verifyResult = "ACCEPT", rejec
   return block;
 }
 
+// --- envelopes (A2A-IDF §7 delegation chains, §8 bilateral receipts) -------------
+// The keyids an envelope names beside the wire keyid are counterparty.example
+// DIDs, and each of them resolves to the RFC 8032 §7.1 Test 2 key. A verifier
+// resolves the wire keyid through the fixture's keyidResolution and any other
+// keyid through envelope.keyidResolutions. An envelope signature is an Ed25519
+// signature, in base64 (RFC 4648 §4, padded), over the UTF-8 bytes of the
+// RFC 8785 JCS form of the payload it signs.
+
+const DELEGATE_1 = "did:web:counterparty.example:agents:delegate-level-1";
+const DELEGATE_2 = "did:web:counterparty.example:agents:delegate-level-2";
+const DELEGATE_3 = "did:web:counterparty.example:agents:delegate-level-3";
+const RESPONDER = "did:web:counterparty.example:agents:receipt-test";
+const APS_REF = "https://github.com/a2aproject/A2A/issues/1575";
+const APS_VERSION = "draft-2026-05-13";
+
+function signJcs(keyid, payload) {
+  const key = keyid === KEYID ? TEST1 : TEST2;
+  return signEd25519(key, jcs(payload)).toString("base64");
+}
+
+// A base64 signature with its first character changed, so its bytes no longer verify.
+function tamperedBase64(signature) {
+  const tampered = (signature[0] === "Y" ? "Z" : "Y") + signature.slice(1);
+  assertEqual(tampered === signature, false, "tampered envelope signature differs");
+  return tampered;
+}
+
+function counterpartyResolution(did) {
+  return {
+    shape: "did-json",
+    contentType: "application/did+json",
+    document: {
+      "@context": [
+        "https://www.w3.org/ns/did/v1",
+        "https://w3id.org/security/suites/ed25519-2020/v1",
+      ],
+      id: did,
+      verificationMethod: [
+        {
+          id: `${did}#key-1`,
+          type: "Ed25519VerificationKey2020",
+          controller: did,
+          publicKeyMultibase: TEST2.multibase,
+        },
+      ],
+      assertionMethod: [`${did}#key-1`],
+    },
+  };
+}
+
+function keyidResolutions(dids) {
+  return Object.fromEntries(dids.map((did) => [did, counterpartyResolution(did)]));
+}
+
+// The chain of delegation-chain-3link: the wire keyid delegates to a
+// counterparty agent, that agent to a second one, and the second back to the
+// wire keyid, which signs the request. Each scope is a subset of the one
+// before it, and no expiry is later than the one before it.
+const CHAIN_LINKS = [
+  {
+    type: "root",
+    issuerKeyid: KEYID,
+    subjectKeyid: DELEGATE_1,
+    scope: ["POST /api/echo", "POST /api/health", "GET /api/health"],
+    issuedAt: "2026-05-01T00:00:00Z",
+    expiresAt: "2026-12-31T00:00:00Z",
+  },
+  {
+    type: "derived",
+    issuerKeyid: DELEGATE_1,
+    subjectKeyid: DELEGATE_2,
+    scope: ["POST /api/echo", "POST /api/health"],
+    issuedAt: "2026-05-05T00:00:00Z",
+    expiresAt: "2026-09-30T00:00:00Z",
+  },
+  {
+    type: "derived",
+    issuerKeyid: DELEGATE_2,
+    subjectKeyid: KEYID,
+    scope: ["POST /api/echo"],
+    issuedAt: "2026-05-10T00:00:00Z",
+    expiresAt: "2026-06-30T00:00:00Z",
+  },
+];
+
+const LINK_PAYLOAD_NOTE = {
+  root: "JCS canonical form of {issuerKeyid, subjectKeyid, scope, issuedAt, expiresAt, type:'root'} signed by the issuer.",
+  derived:
+    "JCS canonical form of {issuerKeyid, subjectKeyid, scope, issuedAt, expiresAt, previousSignature, type:'derived'} signed by the issuer.",
+};
+
+// What the issuer of a link signs: the link's own fields and, for a derived
+// link, previousSignature, the signature of the link before it.
+function linkPayload(link, previousSignature) {
+  const payload = {
+    type: link.type,
+    issuerKeyid: link.issuerKeyid,
+    subjectKeyid: link.subjectKeyid,
+    scope: link.scope,
+    issuedAt: link.issuedAt,
+    expiresAt: link.expiresAt,
+  };
+  if (previousSignature !== undefined) payload.previousSignature = previousSignature;
+  return payload;
+}
+
+// Signs the links in order, each with its issuer's key, so a derived link is
+// bound to the signature of the link before it.
+function signedLinks(specs) {
+  const links = [];
+  for (const [index, spec] of specs.entries()) {
+    const link = { index, ...spec, scope: [...spec.scope] };
+    if (index > 0) link.previousSignatureRef = `links[${index - 1}].signature`;
+    link.signature = signJcs(spec.issuerKeyid, linkPayload(spec, links[index - 1]?.signature));
+    link.linkPayloadJcsNote = LINK_PAYLOAD_NOTE[spec.type];
+    links.push(link);
+  }
+  return links;
+}
+
+// CHAIN_LINKS with the fields in `changes` replaced in link `index`.
+function chainLinksWith(index, changes) {
+  return CHAIN_LINKS.map((spec, i) => (i === index ? { ...spec, ...changes } : spec));
+}
+
+function chainEnvelope(links, { maxDepth = 4, resolved = [DELEGATE_1, DELEGATE_2] } = {}) {
+  return {
+    type: "aps-delegation-chain-v1",
+    version: APS_VERSION,
+    ref: APS_REF,
+    depth: links.length,
+    maxDepth,
+    links,
+    keyidResolutions: keyidResolutions(resolved),
+    conformanceNotes: [
+      "Wire signature (Envoys §14 Vector 3) is byte-identical to a non-enveloped request signed with the same keypair and params.",
+      "Each link's signature is its issuer's Ed25519 signature, in base64, over the UTF-8 bytes of the RFC 8785 JCS form of the payload its linkPayloadJcsNote names. previousSignature is the signature member of the link before it, so a derived link is bound to the link it was issued under.",
+      "The wire keyid resolves through keyidResolution and each other issuer keyid through envelope.keyidResolutions. The counterparty.example keyids resolve to the RFC 8032 §7.1 Test 2 key.",
+    ],
+  };
+}
+
+const RECEIPT_RESPONSE = {
+  responderKeyid: RESPONDER,
+  respondedAt: "2026-05-13T13:31:02Z",
+  status: "ACCEPTED",
+};
+
+// The receipt of bilateral-receipt. `payload` replaces members of the receipt
+// payload before the responder signs it; `tamper` alters the responder
+// signature after signing.
+function receiptEnvelope({ payload = {}, tamper = false } = {}) {
+  const receiptPayloadJcs = {
+    initiatorSignatureBase64: ENVOYS_V2_SIG,
+    initiatorKeyid: KEYID,
+    respondedAt: RECEIPT_RESPONSE.respondedAt,
+    responderKeyid: RECEIPT_RESPONSE.responderKeyid,
+    status: RECEIPT_RESPONSE.status,
+    ...payload,
+  };
+  const signature = signJcs(receiptPayloadJcs.responderKeyid, receiptPayloadJcs);
+  return {
+    type: "aps-bilateral-receipt-v1",
+    version: APS_VERSION,
+    ref: APS_REF,
+    request: {
+      wireSignatureBase64Ref: "expected.signatureBase64",
+      initiatorKeyid: KEYID,
+      initiatedAt: "2026-05-13T13:31:00Z",
+    },
+    response: {
+      ...RECEIPT_RESPONSE,
+      receiptPayloadJcs,
+      responderSignatureBase64: tamper ? tamperedBase64(signature) : signature,
+    },
+    keyidResolutions: keyidResolutions([RESPONDER]),
+    conformanceNotes: [
+      "Wire signature (Envoys §14 Vector 2) is byte-identical to a non-enveloped request signed with the same keypair and params.",
+      "The envelope changes the framework-layer interpretation (a bilateral receipt is a bound request+response pair) but not the wire-layer bytes.",
+      "responderSignatureBase64 is the responder's Ed25519 signature, in base64, over the UTF-8 bytes of the RFC 8785 JCS form of receiptPayloadJcs, whose initiatorSignatureBase64 is the wire signature the receipt acknowledges.",
+      "A2A-IDF §6 dual-shape keyid resolution applies independently to initiator and responder keyids: the initiator keyid resolves through keyidResolution and the responder keyid through envelope.keyidResolutions, to the RFC 8032 §7.1 Test 2 key.",
+    ],
+  };
+}
+
 // --- composition fixtures: positives (Envoys §14 byte-match preserved) ----------
 
 const INPUT_V1 = { method: "GET", path: "/api/health", body: "", bodyEncoding: "utf-8" };
@@ -325,14 +544,19 @@ function signatureAloneFixture() {
   };
 }
 
-function bilateralReceiptFixture() {
-  const expected = expectedBlock(INPUT_V2, PARAMS_V2, TEST1);
+// A negative envelope fixture keeps the wire request of its positive one, which
+// verifies; its rejectCategory names the envelope check it fails.
+function rejectOptions(rejectCategory) {
+  return rejectCategory === undefined ? {} : { verifyResult: "REJECT", rejectCategory };
+}
+
+function receiptFixture({ name, description, envelope, rejectCategory }) {
+  const expected = expectedBlock(INPUT_V2, PARAMS_V2, TEST1, rejectOptions(rejectCategory));
   assertEqual(expected.signatureBase64, ENVOYS_V2_SIG, "Envoys §14 Vector 2 byte-match");
   return {
     $schema: "https://a2a-idf.opena2a.org/schemas/fixture-composition-v1.json",
-    name: "aim-did-rfc9421/bilateral-receipt",
-    description:
-      "A2A-IDF identity-framework wrap of an Envoys §14 Vector 2 wire signature (POST /api/task with a JSON body) inside an APS bilateral-receipt envelope. The initiator's wire signature is byte-identical to Envoys §14 Vector 2 by construction (the envelope does not re-sign the wire request). The envelope adds a responder acknowledgment over a JCS-canonical receipt payload referencing the initiator's wire signature. The conformance verifier checks the wire layer (RFC 9421 + A2A-IDF §6 dual-shape keyid resolution); deeper envelope verification (responder signature over the JCS receipt) is a planned extension.",
+    name: `aim-did-rfc9421/${name}`,
+    description,
     spec: [
       {
         id: "A2A-IDF",
@@ -349,9 +573,11 @@ function bilateralReceiptFixture() {
       SPEC_RFC9530,
       SPEC_RFC8785("JCS canonical form (envelope payload)"),
       SPEC_RFC8032("§7.1 Test 1 (Ed25519 keypair)"),
+      SPEC_RFC8032("§7.1 Test 2 (responder Ed25519 keypair)"),
       SPEC_DID_CORE,
     ],
     keypairRef: KEYPAIR_REF,
+    counterpartyKeypairRef: TEST2_KEYPAIR_REF,
     input: INPUT_V2,
     signatureParams: PARAMS_V2,
     keyidResolution: keyidResolution(TEST1.multibase, TEST1.jwkX),
@@ -364,46 +590,26 @@ function bilateralReceiptFixture() {
         note: "Wire signature is unchanged when the envelope wraps the request. The envelope contributes responder acknowledgment, not a re-sign of the wire payload. Substituting the Envoys §6 compact-form keyid document at the keyid URL yields the same wire signature bytes.",
       },
     },
-    envelope: {
-      type: "aps-bilateral-receipt-v1",
-      version: "draft-2026-05-13",
-      ref: "https://github.com/a2aproject/A2A/issues/1575",
-      request: {
-        wireSignatureBase64Ref: "expected.signatureBase64",
-        initiatorKeyid: KEYID,
-        initiatedAt: "2026-05-13T13:31:00Z",
-      },
-      response: {
-        responderKeyid: "did:web:counterparty.example:agents:receipt-test",
-        respondedAt: "2026-05-13T13:31:02Z",
-        status: "ACCEPTED",
-        receiptPayloadJcs: {
-          initiatorSignatureBase64: ENVOYS_V2_SIG,
-          initiatorKeyid: KEYID,
-          respondedAt: "2026-05-13T13:31:02Z",
-          responderKeyid: "did:web:counterparty.example:agents:receipt-test",
-          status: "ACCEPTED",
-        },
-        responderSignatureNote:
-          "Responder signs the RFC 8785 JCS-canonical form of receiptPayloadJcs using its own keyid. The signature is intentionally omitted here because the responder keypair is illustrative; the fixture's verification scope is the wire layer per A2A-IDF §6. Deeper envelope verification lands in a future suite iteration once APS receipt schemas stabilize.",
-      },
-      conformanceNotes: [
-        "Wire signature (Envoys §14 Vector 2) is byte-identical to a non-enveloped request signed with the same keypair and params.",
-        "The envelope changes the framework-layer interpretation (a bilateral receipt is a bound request+response pair) but not the wire-layer bytes.",
-        "A2A-IDF §6 dual-shape keyid resolution applies independently to initiator and responder keyids.",
-      ],
-    },
+    envelope,
   };
 }
 
-function delegationChainFixture() {
-  const expected = expectedBlock(INPUT_V3, PARAMS_V3, TEST1);
+function bilateralReceiptFixture() {
+  return receiptFixture({
+    name: "bilateral-receipt",
+    description:
+      "A2A-IDF identity-framework wrap of an Envoys §14 Vector 2 wire signature (POST /api/task with a JSON body) inside an APS bilateral-receipt envelope. The initiator's wire signature is byte-identical to Envoys §14 Vector 2 by construction (the envelope does not re-sign the wire request). The envelope adds a responder acknowledgment: the responder's Ed25519 signature over the JCS-canonical receipt payload, which names the initiator's wire signature. Both reference verifiers check the wire layer (RFC 9421 + A2A-IDF §6 dual-shape keyid resolution) and then the envelope: the responder signature over the receipt payload, and that the payload acknowledges this request's signature and initiator and matches the response members beside it.",
+    envelope: receiptEnvelope(),
+  });
+}
+
+function chainFixture({ name, description, envelope, rejectCategory }) {
+  const expected = expectedBlock(INPUT_V3, PARAMS_V3, TEST1, rejectOptions(rejectCategory));
   assertEqual(expected.signatureBase64, ENVOYS_V3_SIG, "Envoys §14 Vector 3 byte-match");
   return {
     $schema: "https://a2a-idf.opena2a.org/schemas/fixture-composition-v1.json",
-    name: "aim-did-rfc9421/delegation-chain-3link",
-    description:
-      "A2A-IDF identity-framework wrap of an Envoys §14 Vector 3 wire signature (POST /api/echo with an empty JSON object body) inside a 3-link APS delegation chain envelope. The wire signature is byte-identical to Envoys §14 Vector 3 by construction. The envelope adds three delegation links demonstrating the chain rules from A2A-IDF §7: scope monotonic narrowing, expiry monotonic non-increase, depth at most maxDepth (default 4), and previousSignature binding between consecutive links. The conformance verifier checks the wire layer (RFC 9421 + A2A-IDF §6 dual-shape keyid resolution); deeper chain verification (per-link signatures and rule enforcement against the link payloads' JCS form) is a planned extension.",
+    name: `aim-did-rfc9421/${name}`,
+    description,
     spec: [
       {
         id: "A2A-IDF",
@@ -420,9 +626,11 @@ function delegationChainFixture() {
       SPEC_RFC9530,
       SPEC_RFC8785("JCS canonical form (per-link payload)"),
       SPEC_RFC8032("§7.1 Test 1 (Ed25519 keypair)"),
+      SPEC_RFC8032("§7.1 Test 2 (delegate Ed25519 keypair)"),
       SPEC_DID_CORE,
     ],
     keypairRef: KEYPAIR_REF,
+    counterpartyKeypairRef: TEST2_KEYPAIR_REF,
     input: INPUT_V3,
     signatureParams: PARAMS_V3,
     keyidResolution: keyidResolution(TEST1.multibase, TEST1.jwkX),
@@ -435,73 +643,17 @@ function delegationChainFixture() {
         note: "Wire signature is unchanged when wrapped in a delegation chain envelope. The chain context is framework-layer metadata; the wire bytes remain those of Envoys §14 Vector 3.",
       },
     },
-    envelope: {
-      type: "aps-delegation-chain-v1",
-      version: "draft-2026-05-13",
-      ref: "https://github.com/a2aproject/A2A/issues/1575",
-      depth: 3,
-      maxDepth: 4,
-      links: [
-        {
-          index: 0,
-          type: "root",
-          issuerKeyid: KEYID,
-          subjectKeyid: "did:web:counterparty.example:agents:delegate-level-1",
-          scope: ["POST /api/echo", "POST /api/health", "GET /api/health"],
-          issuedAt: "2026-05-01T00:00:00Z",
-          expiresAt: "2026-12-31T00:00:00Z",
-          linkPayloadJcsNote:
-            "JCS canonical form of {issuerKeyid, subjectKeyid, scope, issuedAt, expiresAt, type:'root'} signed by the issuer.",
-        },
-        {
-          index: 1,
-          type: "derived",
-          issuerKeyid: "did:web:counterparty.example:agents:delegate-level-1",
-          subjectKeyid: "did:web:counterparty.example:agents:delegate-level-2",
-          scope: ["POST /api/echo", "POST /api/health"],
-          issuedAt: "2026-05-05T00:00:00Z",
-          expiresAt: "2026-09-30T00:00:00Z",
-          previousSignatureRef: "links[0].signature",
-          linkPayloadJcsNote:
-            "JCS canonical form of {issuerKeyid, subjectKeyid, scope, issuedAt, expiresAt, previousSignature, type:'derived'} signed by the issuer.",
-        },
-        {
-          index: 2,
-          type: "derived",
-          issuerKeyid: "did:web:counterparty.example:agents:delegate-level-2",
-          subjectKeyid: KEYID,
-          scope: ["POST /api/echo"],
-          issuedAt: "2026-05-10T00:00:00Z",
-          expiresAt: "2026-06-30T00:00:00Z",
-          previousSignatureRef: "links[1].signature",
-          linkPayloadJcsNote:
-            "JCS canonical form of {issuerKeyid, subjectKeyid, scope, issuedAt, expiresAt, previousSignature, type:'derived'} signed by the issuer.",
-        },
-      ],
-      chainInvariants: {
-        scopeMonotonicNarrow: true,
-        scopeNarrowProof:
-          "links[0].scope ⊇ links[1].scope ⊇ links[2].scope; final scope ['POST /api/echo'] matches the wire request",
-        expiryMonotonicNonIncrease: true,
-        expiryNonIncreaseProof: "2026-12-31 ≥ 2026-09-30 ≥ 2026-06-30",
-        depthAtMostMaxDepth: true,
-        depthProof: "depth=3 ≤ maxDepth=4",
-        previousSignatureBinding:
-          "Each derived link's previousSignature equals the prior link's signature, forming a hash-chain through Ed25519 signatures.",
-      },
-      wireRequestAuthorization: {
-        finalScope: ["POST /api/echo"],
-        wireRequest: "POST /api/echo",
-        match: true,
-        note: "The final subject (chain leaf) is the wire-signature signer; the final scope authorizes the wire request method and path.",
-      },
-      conformanceNotes: [
-        "Wire signature (Envoys §14 Vector 3) is byte-identical to a non-enveloped request signed with the same keypair and params.",
-        "Per-link signatures are intentionally omitted from this fixture; the conformance scope here is the wire layer per A2A-IDF §6. The link signatures are computed over the JCS canonical form of each link payload using the issuer's keyid; deeper verification lands in a future suite iteration once APS delegation schemas stabilize.",
-        "Real chain verification per A2A-IDF §7 enforces scope-narrow, expiry-non-increase, depth ceiling, previousSignature binding, and per-link Ed25519 signature against the resolved issuer key.",
-      ],
-    },
+    envelope,
   };
+}
+
+function delegationChainFixture() {
+  return chainFixture({
+    name: "delegation-chain-3link",
+    description:
+      "A2A-IDF identity-framework wrap of an Envoys §14 Vector 3 wire signature (POST /api/echo with an empty JSON object body) inside a 3-link APS delegation chain envelope. The wire signature is byte-identical to Envoys §14 Vector 3 by construction. The envelope adds three signed delegation links demonstrating the chain rules from A2A-IDF §7: scope monotonic narrowing, expiry monotonic non-increase, depth at most maxDepth, and previousSignature binding between consecutive links. Both reference verifiers check the wire layer (RFC 9421 + A2A-IDF §6 dual-shape keyid resolution) and then the chain: its depth, each link's issuer and its Ed25519 signature over the JCS form of the link payload, scope narrowing and expiry non-increase from link to link, and that the last link delegates to the wire keyid with a scope that grants the request.",
+    envelope: chainEnvelope(signedLinks(CHAIN_LINKS)),
+  });
 }
 
 // --- composition fixtures: negatives ---------------------------------------------
@@ -759,6 +911,142 @@ function signatureTagForeignTamperedFixture() {
     keyidResolution: keyidResolution(TEST1.multibase, TEST1.jwkX),
     expected,
   };
+}
+
+// --- composition fixtures: envelope negatives -------------------------------------
+// Each one keeps the wire request of its positive fixture, which verifies, and
+// carries one envelope defect.
+
+function delegationChainDepthExceededFixture() {
+  return chainFixture({
+    name: "delegation-chain-depth-exceeded",
+    rejectCategory: "DEPTH_EXCEEDED",
+    description:
+      "Negative fixture: the delegation-chain-3link request and chain with envelope.maxDepth set to 2. Every link is signed by its issuer and the chain rules hold, but the chain has 3 links, more than maxDepth allows. A conforming A2A-IDF verifier MUST reject it (DEPTH_EXCEEDED).",
+    envelope: chainEnvelope(signedLinks(CHAIN_LINKS), { maxDepth: 2 }),
+  });
+}
+
+function delegationChainIssuerNotDelegateFixture() {
+  return chainFixture({
+    name: "delegation-chain-issuer-not-delegate",
+    rejectCategory: "CHAIN_BROKEN",
+    description:
+      "Negative fixture: the delegation-chain-3link chain with its last link issued by did:web:counterparty.example:agents:delegate-level-3, which envelope.keyidResolutions resolves, instead of delegate-level-2, the subject of the link before it. The link is signed by its issuer's key, so its signature verifies, but nothing in the chain delegates to delegate-level-3. A conforming A2A-IDF verifier MUST reject it (CHAIN_BROKEN).",
+    envelope: chainEnvelope(signedLinks(chainLinksWith(2, { issuerKeyid: DELEGATE_3 })), {
+      resolved: [DELEGATE_1, DELEGATE_2, DELEGATE_3],
+    }),
+  });
+}
+
+function delegationChainLeafNotSignerFixture() {
+  return chainFixture({
+    name: "delegation-chain-leaf-not-signer",
+    rejectCategory: "CHAIN_BROKEN",
+    description:
+      "Negative fixture: the delegation-chain-3link chain with its last link delegating to did:web:counterparty.example:agents:delegate-level-3 instead of the wire keyid, signed by its issuer. Every link verifies and the chain rules hold, but the chain does not end at the key that signed the request. A conforming A2A-IDF verifier MUST reject it (CHAIN_BROKEN).",
+    envelope: chainEnvelope(signedLinks(chainLinksWith(2, { subjectKeyid: DELEGATE_3 }))),
+  });
+}
+
+function delegationChainRootTamperedFixture() {
+  const links = signedLinks(CHAIN_LINKS);
+  links[0].scope = [...links[0].scope, "DELETE /api/everything"];
+  return chainFixture({
+    name: "delegation-chain-root-tampered",
+    rejectCategory: "LINK_SIGNATURE_INVALID",
+    description:
+      "Negative fixture: the delegation-chain-3link chain with DELETE /api/everything added to the scope of the root link after the root was signed. The links after it are unchanged and still narrow that scope, but the root signature no longer verifies over the root payload. A conforming A2A-IDF verifier MUST reject it (LINK_SIGNATURE_INVALID).",
+    envelope: chainEnvelope(links),
+  });
+}
+
+function delegationChainLinkTamperedFixture() {
+  const links = signedLinks(CHAIN_LINKS);
+  links[1].expiresAt = "2026-08-31T00:00:00Z";
+  return chainFixture({
+    name: "delegation-chain-link-tampered",
+    rejectCategory: "LINK_SIGNATURE_INVALID",
+    description:
+      "Negative fixture: the delegation-chain-3link chain with the expiresAt of link 1 moved from 2026-09-30T00:00:00Z to 2026-08-31T00:00:00Z after the link was signed. Expiry still does not increase along the chain, but the signature of link 1 no longer verifies over its payload. A conforming A2A-IDF verifier MUST reject it (LINK_SIGNATURE_INVALID).",
+    envelope: chainEnvelope(links),
+  });
+}
+
+function delegationChainLinkReplacedFixture() {
+  const links = signedLinks(CHAIN_LINKS);
+  const replacement = signedLinks(chainLinksWith(1, { scope: ["POST /api/echo"] }))[1];
+  assertEqual(replacement.signature === links[1].signature, false, "the replacement link has its own signature");
+  links[1] = replacement;
+  return chainFixture({
+    name: "delegation-chain-link-replaced",
+    rejectCategory: "LINK_SIGNATURE_INVALID",
+    description:
+      "Negative fixture: the delegation-chain-3link chain with link 1 replaced by another link from the same issuer to the same subject, with scope [POST /api/echo], which that issuer signed over the root's signature. The replacement verifies, but link 2 was signed over the signature of the link 1 it was issued under (its previousSignature), so link 2 no longer verifies. A conforming A2A-IDF verifier MUST reject it (LINK_SIGNATURE_INVALID).",
+    envelope: chainEnvelope(links),
+  });
+}
+
+function delegationChainScopeWidenedFixture() {
+  return chainFixture({
+    name: "delegation-chain-scope-widened",
+    rejectCategory: "SCOPE_WIDENED",
+    description:
+      "Negative fixture: the delegation-chain-3link chain with DELETE /api/everything added to the scope of the last link, signed by its issuer. Every link verifies and the last link still grants the request, but it grants an entry that the link before it does not hold. A conforming A2A-IDF verifier MUST reject it (SCOPE_WIDENED).",
+    envelope: chainEnvelope(
+      signedLinks(chainLinksWith(2, { scope: ["POST /api/echo", "DELETE /api/everything"] })),
+    ),
+  });
+}
+
+function delegationChainExpiryExtendedFixture() {
+  return chainFixture({
+    name: "delegation-chain-expiry-extended",
+    rejectCategory: "EXPIRY_EXTENDED",
+    description:
+      "Negative fixture: the delegation-chain-3link chain with the expiresAt of the last link set to 2099-01-01T00:00:00Z, signed by its issuer. Every link verifies, but the last link expires after the link before it (2026-09-30T00:00:00Z). A conforming A2A-IDF verifier MUST reject it (EXPIRY_EXTENDED).",
+    envelope: chainEnvelope(signedLinks(chainLinksWith(2, { expiresAt: "2099-01-01T00:00:00Z" }))),
+  });
+}
+
+function delegationChainRequestOutOfScopeFixture() {
+  return chainFixture({
+    name: "delegation-chain-request-out-of-scope",
+    rejectCategory: "REQUEST_OUT_OF_SCOPE",
+    description:
+      "Negative fixture: the delegation-chain-3link chain with the scope of the last link narrowed to [POST /api/health], signed by its issuer. Every link verifies and every scope narrows the one before it, but the last link does not grant the request, POST /api/echo. A conforming A2A-IDF verifier MUST reject it (REQUEST_OUT_OF_SCOPE).",
+    envelope: chainEnvelope(signedLinks(chainLinksWith(2, { scope: ["POST /api/health"] }))),
+  });
+}
+
+function bilateralReceiptSignatureTamperedFixture() {
+  return receiptFixture({
+    name: "bilateral-receipt-signature-tampered",
+    rejectCategory: "RECEIPT_SIGNATURE_INVALID",
+    description:
+      "Negative fixture: the bilateral-receipt request and receipt with the responder signature altered (first base64 character changed). The receipt payload is unchanged, but the signature no longer verifies over its JCS form. A conforming A2A-IDF verifier MUST reject it (RECEIPT_SIGNATURE_INVALID).",
+    envelope: receiptEnvelope({ tamper: true }),
+  });
+}
+
+function bilateralReceiptOtherRequestFixture() {
+  return receiptFixture({
+    name: "bilateral-receipt-other-request",
+    rejectCategory: "RECEIPT_MISMATCH",
+    description:
+      "Negative fixture: the bilateral-receipt request with a receipt the responder signed for another request: receiptPayloadJcs.initiatorSignatureBase64 is the Envoys §14 Vector 1 signature, not the signature of this request. The responder signature verifies, but the receipt does not acknowledge this request. A conforming A2A-IDF verifier MUST reject it (RECEIPT_MISMATCH).",
+    envelope: receiptEnvelope({ payload: { initiatorSignatureBase64: ENVOYS_V1_SIG } }),
+  });
+}
+
+function bilateralReceiptStatusMismatchFixture() {
+  return receiptFixture({
+    name: "bilateral-receipt-status-mismatch",
+    rejectCategory: "RECEIPT_MISMATCH",
+    description:
+      "Negative fixture: the bilateral-receipt request with a receipt whose signed payload has status REJECTED while envelope.response.status reads ACCEPTED. The responder signature verifies, but the response states a status the responder did not sign. A conforming A2A-IDF verifier MUST reject it (RECEIPT_MISMATCH).",
+    envelope: receiptEnvelope({ payload: { status: "REJECTED" } }),
+  });
 }
 
 // --- level fixtures (A2A-IDF §1 verification levels) ------------------------------
@@ -1562,7 +1850,7 @@ const FILES = {
   "vectors/rfc8032-7-1-test2.json": keypairVector(TEST2, {
     name: "rfc8032-7-1-test2",
     test: "Test 2",
-    role: "Secondary keypair: the trust-registry issuer key for Level 2 organization-attestation fixtures, and the substituted key in the key-substituted negative fixture.",
+    role: "Secondary keypair: the trust-registry issuer key for Level 2 organization-attestation fixtures, the substituted key in the key-substituted negative fixture, and the key of the counterparty.example agents that sign delegation-chain links and bilateral receipts in the composition fixtures.",
   }),
   "fixtures/composition/aim-did-rfc9421/signature-alone.json": signatureAloneFixture(),
   "fixtures/composition/aim-did-rfc9421/bilateral-receipt.json": bilateralReceiptFixture(),
@@ -1575,6 +1863,18 @@ const FILES = {
   "fixtures/composition/aim-did-rfc9421/signature-tag-absent.json": signatureTagAbsentFixture(),
   "fixtures/composition/aim-did-rfc9421/signature-tag-foreign.json": signatureTagForeignFixture(),
   "fixtures/composition/aim-did-rfc9421/signature-tag-foreign-tampered.json": signatureTagForeignTamperedFixture(),
+  "fixtures/composition/aim-did-rfc9421/delegation-chain-depth-exceeded.json": delegationChainDepthExceededFixture(),
+  "fixtures/composition/aim-did-rfc9421/delegation-chain-issuer-not-delegate.json": delegationChainIssuerNotDelegateFixture(),
+  "fixtures/composition/aim-did-rfc9421/delegation-chain-leaf-not-signer.json": delegationChainLeafNotSignerFixture(),
+  "fixtures/composition/aim-did-rfc9421/delegation-chain-root-tampered.json": delegationChainRootTamperedFixture(),
+  "fixtures/composition/aim-did-rfc9421/delegation-chain-link-tampered.json": delegationChainLinkTamperedFixture(),
+  "fixtures/composition/aim-did-rfc9421/delegation-chain-link-replaced.json": delegationChainLinkReplacedFixture(),
+  "fixtures/composition/aim-did-rfc9421/delegation-chain-scope-widened.json": delegationChainScopeWidenedFixture(),
+  "fixtures/composition/aim-did-rfc9421/delegation-chain-expiry-extended.json": delegationChainExpiryExtendedFixture(),
+  "fixtures/composition/aim-did-rfc9421/delegation-chain-request-out-of-scope.json": delegationChainRequestOutOfScopeFixture(),
+  "fixtures/composition/aim-did-rfc9421/bilateral-receipt-signature-tampered.json": bilateralReceiptSignatureTamperedFixture(),
+  "fixtures/composition/aim-did-rfc9421/bilateral-receipt-other-request.json": bilateralReceiptOtherRequestFixture(),
+  "fixtures/composition/aim-did-rfc9421/bilateral-receipt-status-mismatch.json": bilateralReceiptStatusMismatchFixture(),
   "fixtures/levels/level-0-self-asserted.json": level0Fixture(),
   "fixtures/levels/level-0-agent-id-malformed.json": level0MalformedFixture(),
   "fixtures/levels/level-0-agent-id-null.json": level0AgentIdNullFixture(),
@@ -1605,10 +1905,17 @@ const FILES = {
   "fixtures/levels/level-2-jcs-utf16-key-order.json": level2JcsUtf16KeyOrderFixture(),
 };
 
-// A soft hyphen is invisible in most editors and diffs, so a fixture that
-// carries one writes it as a JSON escape. The parsed value is the same.
+// JSON.stringify writes U+0000-U+001F in a string as escapes, but writes DEL
+// (U+007F), the C1 control characters (U+0080-U+009F) and the soft hyphen
+// (U+00AD) as they are. None of these is a graphic character, so a raw one can
+// pass unseen in an editor or a diff; serialize() writes each as a JSON escape
+// instead. The parsed value is the same.
 function serialize(content) {
-  return JSON.stringify(content, null, 2).replaceAll("\u00ad", "\\u00ad") + "\n";
+  const json = JSON.stringify(content, null, 2).replace(
+    /[\u007f-\u009f\u00ad]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+  return json + "\n";
 }
 
 function assertEqual(actual, expected, what) {

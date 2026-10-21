@@ -12,7 +12,7 @@
     {
       "language": "node",
       "path": "scripts/verify.mjs",
-      "coverage": "full: composition (RFC 9421 wire layer + §6 dual-shape keyid resolution) and levels (§1 SELF_ASSERTED / DOMAIN_VERIFIED / ORGANIZATION_VERIFIED)"
+      "coverage": "full: composition (RFC 9421 wire layer + §6 dual-shape keyid resolution + §7 delegation-chain and §8 bilateral-receipt envelopes) and levels (§1 SELF_ASSERTED / DOMAIN_VERIFIED / ORGANIZATION_VERIFIED)"
     },
     {
       "language": "python",
@@ -26,12 +26,8 @@
       "reason": "fixtures pin the TXT record content; live resolution is deployment behavior, not byte-stable"
     },
     {
-      "specSection": "§7 Delegation chains — per-link signatures and chain-rule enforcement",
-      "reason": "envelope shapes pinned in fixtures; deeper verification lands once APS delegation schemas stabilize"
-    },
-    {
-      "specSection": "§8 Bilateral receipts — responder signature over the JCS receipt payload",
-      "reason": "same APS schema-stability dependency as delegation chains"
+      "specSection": "§7 and §8 envelopes — link and receipt timestamps against the time of verification",
+      "reason": "the envelope fixtures pin no verification time, so neither verifier compares issuedAt, expiresAt or respondedAt with a clock"
     },
     {
       "specSection": "v1.1 Vouching attestations",
@@ -43,6 +39,177 @@
     }
   ],
   "requirements": [
+    {
+      "fixture": "fixtures/composition/aim-did-rfc9421/bilateral-receipt-other-request.json",
+      "name": "aim-did-rfc9421/bilateral-receipt-other-request",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape) and §8 Composition with bilateral receipts"
+        },
+        {
+          "id": "APS",
+          "ref": "https://github.com/a2aproject/A2A/issues/1575",
+          "section": "Bilateral receipt envelope"
+        },
+        {
+          "id": "Envoys signature/v1",
+          "ref": "https://envoys.me/specs/signature/v1",
+          "version": "1.5.1",
+          "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+          "section": "§14 Vector 2 (POST request, JSON body)"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§2.5 Creating the Signature Base"
+        },
+        {
+          "id": "RFC 9530",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+          "section": "Content-Digest header field"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (envelope payload)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (Ed25519 keypair)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (responder Ed25519 keypair)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "REJECT[RECEIPT_MISMATCH]",
+      "description": "Negative fixture: the bilateral-receipt request with a receipt the responder signed for another request: receiptPayloadJcs.initiatorSignatureBase64 is the Envoys §14 Vector 1 signature, not the signature of this request. The responder signature verifies, but the receipt does not acknowledge this request. A conforming A2A-IDF verifier MUST reject it (RECEIPT_MISMATCH)."
+    },
+    {
+      "fixture": "fixtures/composition/aim-did-rfc9421/bilateral-receipt-signature-tampered.json",
+      "name": "aim-did-rfc9421/bilateral-receipt-signature-tampered",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape) and §8 Composition with bilateral receipts"
+        },
+        {
+          "id": "APS",
+          "ref": "https://github.com/a2aproject/A2A/issues/1575",
+          "section": "Bilateral receipt envelope"
+        },
+        {
+          "id": "Envoys signature/v1",
+          "ref": "https://envoys.me/specs/signature/v1",
+          "version": "1.5.1",
+          "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+          "section": "§14 Vector 2 (POST request, JSON body)"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§2.5 Creating the Signature Base"
+        },
+        {
+          "id": "RFC 9530",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+          "section": "Content-Digest header field"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (envelope payload)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (Ed25519 keypair)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (responder Ed25519 keypair)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "REJECT[RECEIPT_SIGNATURE_INVALID]",
+      "description": "Negative fixture: the bilateral-receipt request and receipt with the responder signature altered (first base64 character changed). The receipt payload is unchanged, but the signature no longer verifies over its JCS form. A conforming A2A-IDF verifier MUST reject it (RECEIPT_SIGNATURE_INVALID)."
+    },
+    {
+      "fixture": "fixtures/composition/aim-did-rfc9421/bilateral-receipt-status-mismatch.json",
+      "name": "aim-did-rfc9421/bilateral-receipt-status-mismatch",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape) and §8 Composition with bilateral receipts"
+        },
+        {
+          "id": "APS",
+          "ref": "https://github.com/a2aproject/A2A/issues/1575",
+          "section": "Bilateral receipt envelope"
+        },
+        {
+          "id": "Envoys signature/v1",
+          "ref": "https://envoys.me/specs/signature/v1",
+          "version": "1.5.1",
+          "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+          "section": "§14 Vector 2 (POST request, JSON body)"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§2.5 Creating the Signature Base"
+        },
+        {
+          "id": "RFC 9530",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+          "section": "Content-Digest header field"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (envelope payload)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (Ed25519 keypair)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (responder Ed25519 keypair)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "REJECT[RECEIPT_MISMATCH]",
+      "description": "Negative fixture: the bilateral-receipt request with a receipt whose signed payload has status REJECTED while envelope.response.status reads ACCEPTED. The responder signature verifies, but the response states a status the responder did not sign. A conforming A2A-IDF verifier MUST reject it (RECEIPT_MISMATCH)."
+    },
     {
       "fixture": "fixtures/composition/aim-did-rfc9421/bilateral-receipt.json",
       "name": "aim-did-rfc9421/bilateral-receipt",
@@ -87,13 +254,18 @@
           "section": "§7.1 Test 1 (Ed25519 keypair)"
         },
         {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (responder Ed25519 keypair)"
+        },
+        {
           "id": "W3C DID Core v1.0",
           "ref": "https://www.w3.org/TR/did-core/",
           "section": "§5.2 Verification Methods"
         }
       ],
       "expected": "ACCEPT",
-      "description": "A2A-IDF identity-framework wrap of an Envoys §14 Vector 2 wire signature (POST /api/task with a JSON body) inside an APS bilateral-receipt envelope. The initiator's wire signature is byte-identical to Envoys §14 Vector 2 by construction (the envelope does not re-sign the wire request). The envelope adds a responder acknowledgment over a JCS-canonical receipt payload referencing the initiator's wire signature. The conformance verifier checks the wire layer (RFC 9421 + A2A-IDF §6 dual-shape keyid resolution); deeper envelope verification (responder signature over the JCS receipt) is a planned extension."
+      "description": "A2A-IDF identity-framework wrap of an Envoys §14 Vector 2 wire signature (POST /api/task with a JSON body) inside an APS bilateral-receipt envelope. The initiator's wire signature is byte-identical to Envoys §14 Vector 2 by construction (the envelope does not re-sign the wire request). The envelope adds a responder acknowledgment: the responder's Ed25519 signature over the JCS-canonical receipt payload, which names the initiator's wire signature. Both reference verifiers check the wire layer (RFC 9421 + A2A-IDF §6 dual-shape keyid resolution) and then the envelope: the responder signature over the receipt payload, and that the payload acknowledges this request's signature and initiator and matches the response members beside it."
     },
     {
       "fixture": "fixtures/composition/aim-did-rfc9421/body-tampered.json",
@@ -211,13 +383,531 @@
           "section": "§7.1 Test 1 (Ed25519 keypair)"
         },
         {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (delegate Ed25519 keypair)"
+        },
+        {
           "id": "W3C DID Core v1.0",
           "ref": "https://www.w3.org/TR/did-core/",
           "section": "§5.2 Verification Methods"
         }
       ],
       "expected": "ACCEPT",
-      "description": "A2A-IDF identity-framework wrap of an Envoys §14 Vector 3 wire signature (POST /api/echo with an empty JSON object body) inside a 3-link APS delegation chain envelope. The wire signature is byte-identical to Envoys §14 Vector 3 by construction. The envelope adds three delegation links demonstrating the chain rules from A2A-IDF §7: scope monotonic narrowing, expiry monotonic non-increase, depth at most maxDepth (default 4), and previousSignature binding between consecutive links. The conformance verifier checks the wire layer (RFC 9421 + A2A-IDF §6 dual-shape keyid resolution); deeper chain verification (per-link signatures and rule enforcement against the link payloads' JCS form) is a planned extension."
+      "description": "A2A-IDF identity-framework wrap of an Envoys §14 Vector 3 wire signature (POST /api/echo with an empty JSON object body) inside a 3-link APS delegation chain envelope. The wire signature is byte-identical to Envoys §14 Vector 3 by construction. The envelope adds three signed delegation links demonstrating the chain rules from A2A-IDF §7: scope monotonic narrowing, expiry monotonic non-increase, depth at most maxDepth, and previousSignature binding between consecutive links. Both reference verifiers check the wire layer (RFC 9421 + A2A-IDF §6 dual-shape keyid resolution) and then the chain: its depth, each link's issuer and its Ed25519 signature over the JCS form of the link payload, scope narrowing and expiry non-increase from link to link, and that the last link delegates to the wire keyid with a scope that grants the request."
+    },
+    {
+      "fixture": "fixtures/composition/aim-did-rfc9421/delegation-chain-depth-exceeded.json",
+      "name": "aim-did-rfc9421/delegation-chain-depth-exceeded",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape) and §7 Delegation chains"
+        },
+        {
+          "id": "APS",
+          "ref": "https://github.com/a2aproject/A2A/issues/1575",
+          "section": "Delegation chain envelopes"
+        },
+        {
+          "id": "Envoys signature/v1",
+          "ref": "https://envoys.me/specs/signature/v1",
+          "version": "1.5.1",
+          "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+          "section": "§14 Vector 3 (POST request, empty JSON object body)"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§2.5 Creating the Signature Base"
+        },
+        {
+          "id": "RFC 9530",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+          "section": "Content-Digest header field"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (per-link payload)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (Ed25519 keypair)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (delegate Ed25519 keypair)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "REJECT[DEPTH_EXCEEDED]",
+      "description": "Negative fixture: the delegation-chain-3link request and chain with envelope.maxDepth set to 2. Every link is signed by its issuer and the chain rules hold, but the chain has 3 links, more than maxDepth allows. A conforming A2A-IDF verifier MUST reject it (DEPTH_EXCEEDED)."
+    },
+    {
+      "fixture": "fixtures/composition/aim-did-rfc9421/delegation-chain-expiry-extended.json",
+      "name": "aim-did-rfc9421/delegation-chain-expiry-extended",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape) and §7 Delegation chains"
+        },
+        {
+          "id": "APS",
+          "ref": "https://github.com/a2aproject/A2A/issues/1575",
+          "section": "Delegation chain envelopes"
+        },
+        {
+          "id": "Envoys signature/v1",
+          "ref": "https://envoys.me/specs/signature/v1",
+          "version": "1.5.1",
+          "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+          "section": "§14 Vector 3 (POST request, empty JSON object body)"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§2.5 Creating the Signature Base"
+        },
+        {
+          "id": "RFC 9530",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+          "section": "Content-Digest header field"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (per-link payload)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (Ed25519 keypair)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (delegate Ed25519 keypair)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "REJECT[EXPIRY_EXTENDED]",
+      "description": "Negative fixture: the delegation-chain-3link chain with the expiresAt of the last link set to 2099-01-01T00:00:00Z, signed by its issuer. Every link verifies, but the last link expires after the link before it (2026-09-30T00:00:00Z). A conforming A2A-IDF verifier MUST reject it (EXPIRY_EXTENDED)."
+    },
+    {
+      "fixture": "fixtures/composition/aim-did-rfc9421/delegation-chain-issuer-not-delegate.json",
+      "name": "aim-did-rfc9421/delegation-chain-issuer-not-delegate",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape) and §7 Delegation chains"
+        },
+        {
+          "id": "APS",
+          "ref": "https://github.com/a2aproject/A2A/issues/1575",
+          "section": "Delegation chain envelopes"
+        },
+        {
+          "id": "Envoys signature/v1",
+          "ref": "https://envoys.me/specs/signature/v1",
+          "version": "1.5.1",
+          "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+          "section": "§14 Vector 3 (POST request, empty JSON object body)"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§2.5 Creating the Signature Base"
+        },
+        {
+          "id": "RFC 9530",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+          "section": "Content-Digest header field"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (per-link payload)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (Ed25519 keypair)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (delegate Ed25519 keypair)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "REJECT[CHAIN_BROKEN]",
+      "description": "Negative fixture: the delegation-chain-3link chain with its last link issued by did:web:counterparty.example:agents:delegate-level-3, which envelope.keyidResolutions resolves, instead of delegate-level-2, the subject of the link before it. The link is signed by its issuer's key, so its signature verifies, but nothing in the chain delegates to delegate-level-3. A conforming A2A-IDF verifier MUST reject it (CHAIN_BROKEN)."
+    },
+    {
+      "fixture": "fixtures/composition/aim-did-rfc9421/delegation-chain-leaf-not-signer.json",
+      "name": "aim-did-rfc9421/delegation-chain-leaf-not-signer",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape) and §7 Delegation chains"
+        },
+        {
+          "id": "APS",
+          "ref": "https://github.com/a2aproject/A2A/issues/1575",
+          "section": "Delegation chain envelopes"
+        },
+        {
+          "id": "Envoys signature/v1",
+          "ref": "https://envoys.me/specs/signature/v1",
+          "version": "1.5.1",
+          "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+          "section": "§14 Vector 3 (POST request, empty JSON object body)"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§2.5 Creating the Signature Base"
+        },
+        {
+          "id": "RFC 9530",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+          "section": "Content-Digest header field"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (per-link payload)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (Ed25519 keypair)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (delegate Ed25519 keypair)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "REJECT[CHAIN_BROKEN]",
+      "description": "Negative fixture: the delegation-chain-3link chain with its last link delegating to did:web:counterparty.example:agents:delegate-level-3 instead of the wire keyid, signed by its issuer. Every link verifies and the chain rules hold, but the chain does not end at the key that signed the request. A conforming A2A-IDF verifier MUST reject it (CHAIN_BROKEN)."
+    },
+    {
+      "fixture": "fixtures/composition/aim-did-rfc9421/delegation-chain-link-replaced.json",
+      "name": "aim-did-rfc9421/delegation-chain-link-replaced",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape) and §7 Delegation chains"
+        },
+        {
+          "id": "APS",
+          "ref": "https://github.com/a2aproject/A2A/issues/1575",
+          "section": "Delegation chain envelopes"
+        },
+        {
+          "id": "Envoys signature/v1",
+          "ref": "https://envoys.me/specs/signature/v1",
+          "version": "1.5.1",
+          "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+          "section": "§14 Vector 3 (POST request, empty JSON object body)"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§2.5 Creating the Signature Base"
+        },
+        {
+          "id": "RFC 9530",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+          "section": "Content-Digest header field"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (per-link payload)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (Ed25519 keypair)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (delegate Ed25519 keypair)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "REJECT[LINK_SIGNATURE_INVALID]",
+      "description": "Negative fixture: the delegation-chain-3link chain with link 1 replaced by another link from the same issuer to the same subject, with scope [POST /api/echo], which that issuer signed over the root's signature. The replacement verifies, but link 2 was signed over the signature of the link 1 it was issued under (its previousSignature), so link 2 no longer verifies. A conforming A2A-IDF verifier MUST reject it (LINK_SIGNATURE_INVALID)."
+    },
+    {
+      "fixture": "fixtures/composition/aim-did-rfc9421/delegation-chain-link-tampered.json",
+      "name": "aim-did-rfc9421/delegation-chain-link-tampered",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape) and §7 Delegation chains"
+        },
+        {
+          "id": "APS",
+          "ref": "https://github.com/a2aproject/A2A/issues/1575",
+          "section": "Delegation chain envelopes"
+        },
+        {
+          "id": "Envoys signature/v1",
+          "ref": "https://envoys.me/specs/signature/v1",
+          "version": "1.5.1",
+          "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+          "section": "§14 Vector 3 (POST request, empty JSON object body)"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§2.5 Creating the Signature Base"
+        },
+        {
+          "id": "RFC 9530",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+          "section": "Content-Digest header field"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (per-link payload)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (Ed25519 keypair)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (delegate Ed25519 keypair)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "REJECT[LINK_SIGNATURE_INVALID]",
+      "description": "Negative fixture: the delegation-chain-3link chain with the expiresAt of link 1 moved from 2026-09-30T00:00:00Z to 2026-08-31T00:00:00Z after the link was signed. Expiry still does not increase along the chain, but the signature of link 1 no longer verifies over its payload. A conforming A2A-IDF verifier MUST reject it (LINK_SIGNATURE_INVALID)."
+    },
+    {
+      "fixture": "fixtures/composition/aim-did-rfc9421/delegation-chain-request-out-of-scope.json",
+      "name": "aim-did-rfc9421/delegation-chain-request-out-of-scope",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape) and §7 Delegation chains"
+        },
+        {
+          "id": "APS",
+          "ref": "https://github.com/a2aproject/A2A/issues/1575",
+          "section": "Delegation chain envelopes"
+        },
+        {
+          "id": "Envoys signature/v1",
+          "ref": "https://envoys.me/specs/signature/v1",
+          "version": "1.5.1",
+          "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+          "section": "§14 Vector 3 (POST request, empty JSON object body)"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§2.5 Creating the Signature Base"
+        },
+        {
+          "id": "RFC 9530",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+          "section": "Content-Digest header field"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (per-link payload)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (Ed25519 keypair)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (delegate Ed25519 keypair)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "REJECT[REQUEST_OUT_OF_SCOPE]",
+      "description": "Negative fixture: the delegation-chain-3link chain with the scope of the last link narrowed to [POST /api/health], signed by its issuer. Every link verifies and every scope narrows the one before it, but the last link does not grant the request, POST /api/echo. A conforming A2A-IDF verifier MUST reject it (REQUEST_OUT_OF_SCOPE)."
+    },
+    {
+      "fixture": "fixtures/composition/aim-did-rfc9421/delegation-chain-root-tampered.json",
+      "name": "aim-did-rfc9421/delegation-chain-root-tampered",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape) and §7 Delegation chains"
+        },
+        {
+          "id": "APS",
+          "ref": "https://github.com/a2aproject/A2A/issues/1575",
+          "section": "Delegation chain envelopes"
+        },
+        {
+          "id": "Envoys signature/v1",
+          "ref": "https://envoys.me/specs/signature/v1",
+          "version": "1.5.1",
+          "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+          "section": "§14 Vector 3 (POST request, empty JSON object body)"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§2.5 Creating the Signature Base"
+        },
+        {
+          "id": "RFC 9530",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+          "section": "Content-Digest header field"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (per-link payload)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (Ed25519 keypair)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (delegate Ed25519 keypair)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "REJECT[LINK_SIGNATURE_INVALID]",
+      "description": "Negative fixture: the delegation-chain-3link chain with DELETE /api/everything added to the scope of the root link after the root was signed. The links after it are unchanged and still narrow that scope, but the root signature no longer verifies over the root payload. A conforming A2A-IDF verifier MUST reject it (LINK_SIGNATURE_INVALID)."
+    },
+    {
+      "fixture": "fixtures/composition/aim-did-rfc9421/delegation-chain-scope-widened.json",
+      "name": "aim-did-rfc9421/delegation-chain-scope-widened",
+      "fixtureType": "composition",
+      "level": "MUST",
+      "specRefs": [
+        {
+          "id": "A2A-IDF",
+          "ref": "https://github.com/a2aproject/A2A/pull/1496",
+          "section": "§6 Public-key resolution (dual-shape) and §7 Delegation chains"
+        },
+        {
+          "id": "APS",
+          "ref": "https://github.com/a2aproject/A2A/issues/1575",
+          "section": "Delegation chain envelopes"
+        },
+        {
+          "id": "Envoys signature/v1",
+          "ref": "https://envoys.me/specs/signature/v1",
+          "version": "1.5.1",
+          "specSha256": "d343e4282a27610f0b8f4f8f8922e35790deff7b558086e9e86fbd0c0857ec48",
+          "section": "§14 Vector 3 (POST request, empty JSON object body)"
+        },
+        {
+          "id": "RFC 9421",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9421",
+          "section": "§2.5 Creating the Signature Base"
+        },
+        {
+          "id": "RFC 9530",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc9530",
+          "section": "Content-Digest header field"
+        },
+        {
+          "id": "RFC 8785",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8785",
+          "section": "JCS canonical form (per-link payload)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 1 (Ed25519 keypair)"
+        },
+        {
+          "id": "RFC 8032",
+          "ref": "https://datatracker.ietf.org/doc/html/rfc8032",
+          "section": "§7.1 Test 2 (delegate Ed25519 keypair)"
+        },
+        {
+          "id": "W3C DID Core v1.0",
+          "ref": "https://www.w3.org/TR/did-core/",
+          "section": "§5.2 Verification Methods"
+        }
+      ],
+      "expected": "REJECT[SCOPE_WIDENED]",
+      "description": "Negative fixture: the delegation-chain-3link chain with DELETE /api/everything added to the scope of the last link, signed by its issuer. Every link verifies and the last link still grants the request, but it grants an entry that the link before it does not hold. A conforming A2A-IDF verifier MUST reject it (SCOPE_WIDENED)."
     },
     {
       "fixture": "fixtures/composition/aim-did-rfc9421/key-substituted.json",

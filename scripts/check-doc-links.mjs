@@ -21,8 +21,13 @@
 // the commands and cosign output flags in it are not read, the `.sigstore/<org>/`
 // directory is. URLs with a scheme and same-page `#anchor` links are skipped.
 //
+// Usage:  node scripts/check-doc-links.mjs
+//         node scripts/check-doc-links.mjs --help
+// The check takes no arguments, and reads them before any file: --help (or -h)
+// prints the usage, and any other argument is a usage error.
+//
 // Exit codes: 0 = every path resolves, 1 = at least one does not, or the check
-// could not run (one `error:` line names the cause).
+// could not run (one `error:` line names the cause), 2 = usage error.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -379,6 +384,27 @@ function checkFile(relPath) {
     });
 
   return { checked, broken };
+}
+
+const USAGE = "usage: node check-doc-links.mjs";
+const HELP = [
+  USAGE,
+  "Checks the relative links and command script paths of the tracked Markdown files. Takes no arguments.",
+  "Exit code: 0 when every path resolves, 1 when one does not or the check cannot run, 2 for a usage error.",
+].join("\n");
+
+// The argument is printed with its control characters escaped, as verify.mjs
+// prints an unknown option: it can be a file name a shell pattern expanded to.
+for (const arg of process.argv.slice(2)) {
+  if (arg === "--help" || arg === "-h") {
+    console.log(HELP);
+    process.exit(0);
+  }
+  const kind = arg.startsWith("-") && arg !== "-" ? "unknown option" : "unexpected argument";
+  const shown = arg.replace(/[\u0000-\u001f\u007f-\u009f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  console.error(USAGE);
+  console.error(`check-doc-links.mjs: ${kind}: ${shown}`);
+  process.exit(2);
 }
 
 let checked = 0;

@@ -9,7 +9,8 @@ everything else.
 
 Handles both fixture families:
   - composition fixtures (fixtures/composition/**): RFC 9421 wire signature
-    + A2A-IDF §6 dual-shape keyid resolution
+    + A2A-IDF §6 dual-shape keyid resolution, and the delegation-chain or
+    bilateral-receipt envelope a fixture wraps the request in (§7, §8)
   - level fixtures (fixtures/levels/**): A2A-IDF §1 verification levels
     (SELF_ASSERTED / DOMAIN_VERIFIED / ORGANIZATION_VERIFIED)
 Every fixture is first checked against its family's schema in ../schemas/;
@@ -22,9 +23,12 @@ prints the usage on stdout. Any other argument that starts with "-", other
 than "-" alone, is an unknown option, never a fixture path; every argument
 after "--" is a path. An empty argument is a usage error, not the current
 directory.
+The last line counts the fixtures that passed, failed (missed the pinned
+outcome) and could not be evaluated (ERROR), each apart.
 Exit code: 0 if every fixture's expected verdict (and reject category,
 when pinned) is met, else 1; 2 for a usage error (no path, an empty
-argument, or an unknown option).
+argument, or an unknown option), and 2 when the `cryptography` package is
+not installed, reported in one line.
 """
 
 from __future__ import annotations
@@ -52,8 +56,21 @@ CONTENT_DIGEST_ALGORITHMS = {
     "sha-512": hashlib.sha512,
 }
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+try:
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+except ModuleNotFoundError as exc:
+    # Without the package, main() prints this one line instead of a traceback
+    # once the arguments are read, so --help and a usage error do not need it.
+    # Another import error (a broken install) keeps its traceback.
+    if exc.name != "cryptography":
+        raise
+    MISSING_DEPENDENCY = (
+        "verify.py needs the cryptography package: python3 -m pip install cryptography "
+        "(see scripts/README.md#install)"
+    )
+else:
+    MISSING_DEPENDENCY = None
 
 # Envoys signature/v1 §4.3: the RFC 9421 `tag` an A2A message signature carries.
 A2A_MESSAGE_TAG = "a2a-message"
@@ -369,8 +386,9 @@ def gate_verdict(
 
 def verify_composition_fixture(fixture: dict[str, Any]) -> tuple[bool, str | None, list[str]]:
     """The fixture has passed the schema stage (verify_fixture), so its required
-    blocks are present and the optional crossSuiteEquivalence block and its
-    `envoys` member, when present, are JSON objects."""
+    blocks are present, the optional crossSuiteEquivalence block and its
+    `envoys` member, when present, are JSON objects, and an envelope, when
+    present, is a JSON object of a known type with the members that type needs."""
     expected = fixture.get("expected", {})
 
     # Recompute Content-Digest. Algorithm is taken from the prefix of
@@ -471,10 +489,273 @@ def verify_composition_fixture(fixture: dict[str, Any]) -> tuple[bool, str | Non
             vector = _reason_text(cse.get("vector", _MISSING))
             reason = f"verified signature does not byte-match Envoys {vector}"
 
+    # The envelope, when the fixture carries one, is checked once the wire
+    # signature it wraps has verified, as in verify.mjs.
+    if verdict == "ACCEPT" and "envelope" in fixture:
+        result = _evaluate_envelope(fixture, pubkey, sig)
+        if "stage" in result:
+            return False, None, [f"stage:  {result['stage']}", f"reason: {result['reason']}"]
+        verdict, category, reason = result["verdict"], result.get("category"), result.get("reason")
+
     ok, observed, lines = gate_verdict(expected, verdict, category)
     if not ok and reason and lines:
         lines[-1] += f" ({reason})"
     return ok, observed, lines
+
+
+# --- envelopes (A2A-IDF §7 delegation chains, §8 bilateral receipts) ---------------
+
+# An envelope member the checks cannot read fails the fixture at stage
+# `envelope`, and an envelope that can be read and breaks a rule is a REJECT,
+# in the order verify.mjs checks them (listed under "envelope" in
+# fixtures/composition/SCHEMA.md).
+CHAIN_ENVELOPE = "aps-delegation-chain-v1"
+RECEIPT_SIGNED_MEMBERS = (
+    "initiatorSignatureBase64",
+    "initiatorKeyid",
+    "respondedAt",
+    "responderKeyid",
+    "status",
+)
+
+# A link timestamp as TIMESTAMP_RE in verify.mjs reads one: the whole string,
+# in ASCII digits. TIMESTAMP_RE in this file would also match before a final
+# line feed ($) and take the digits of other scripts (\d).
+_LINK_TIMESTAMP_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
+
+
+def _envelope_failure(reason: str) -> dict[str, Any]:
+    return {"stage": "envelope", "reason": reason}
+
+
+def _evaluate_envelope(
+    fixture: dict[str, Any], wire_key: Ed25519PublicKey, wire_signature: bytes
+) -> dict[str, Any]:
+    """`wire_key` is the key the wire signature verified with and
+    `wire_signature` the signature bytes it verified."""
+    # The wire keyid resolves through keyidResolution, so an entry for it here
+    # would be a second key for one keyid.
+    if fixture["signatureParams"]["keyid"] in fixture["envelope"]["keyidResolutions"]:
+        return _envelope_failure(
+            "envelope.keyidResolutions holds an entry for signatureParams.keyid, "
+            "which resolves through keyidResolution"
+        )
+    if fixture["envelope"]["type"] == CHAIN_ENVELOPE:
+        return _evaluate_chain(fixture, wire_key)
+    return _evaluate_receipt(fixture, wire_key, wire_signature)
+
+
+def _envelope_key(
+    fixture: dict[str, Any], wire_key: Ed25519PublicKey, keyid: str, where: str
+) -> tuple[Ed25519PublicKey | None, str | None]:
+    """The key of `keyid`, which the envelope names at `where`: the wire key
+    for the wire keyid, else the key of the keyid's entry in
+    envelope.keyidResolutions. Returns (key, None) or (None, reason)."""
+    if keyid == fixture["signatureParams"]["keyid"]:
+        return wire_key, None
+    resolutions = fixture["envelope"]["keyidResolutions"]
+    if keyid not in resolutions:
+        return None, f"envelope.keyidResolutions has no entry for {where}"
+    kr = resolutions[keyid]
+    readable = isinstance(kr, dict) and (
+        (kr.get("shape") == "compact" and isinstance(kr.get("publicKeyPem"), str))
+        or (kr.get("shape") == "did-json" and isinstance(kr.get("document"), dict))
+    )
+    if not readable:
+        return None, (
+            f"the envelope.keyidResolutions entry for {where} "
+            "is not a compact or did-json keyidResolution"
+        )
+    try:
+        return extract_public_key(kr), None
+    except ValueError as exc:
+        return None, f"the envelope.keyidResolutions entry for {where}: {exc}"
+
+
+def _verifies_over_jcs(key: Ed25519PublicKey, payload: dict[str, Any], signature: str) -> bool:
+    """Whether `signature`, the base64 text of a 64-byte Ed25519 signature,
+    verifies with `key` over the UTF-8 bytes of the JCS form of `payload`. Text
+    that is not exactly the base64 encoding of the bytes it decodes to does not
+    verify, as in verify.mjs."""
+    try:
+        sig = base64.b64decode(signature, validate=True)
+    except ValueError:
+        return False
+    if len(sig) != 64 or base64.b64encode(sig).decode("ascii") != signature:
+        return False
+    try:
+        key.verify(sig, _jcs(payload).encode("utf-8"))
+    except InvalidSignature:
+        return False
+    return True
+
+
+def _link_payload(link: dict[str, Any], previous_signature: str | None) -> dict[str, Any]:
+    """What the issuer of a link signs: the link's own fields and, for a
+    derived link, previousSignature, the signature of the link before it."""
+    payload = {
+        field: link[field]
+        for field in ("type", "issuerKeyid", "subjectKeyid", "scope", "issuedAt", "expiresAt")
+    }
+    if previous_signature is not None:
+        payload["previousSignature"] = previous_signature
+    return payload
+
+
+def _link_shape_error(link: Any, i: int, where: str) -> str | None:
+    """Why link `i` cannot be read, or None."""
+    if not isinstance(link, dict):
+        return f"{where} is not a JSON object"
+    index = link.get("index", _MISSING)
+    if _json_type(index) != "integer" or index != i:
+        return f"{where}.index is not {i}"
+    link_type = "root" if i == 0 else "derived"
+    if link.get("type") != link_type:
+        return f'{where}.type is not "{link_type}"'
+    for field in ("issuerKeyid", "subjectKeyid"):
+        if not _is_nonempty_str(link.get(field)):
+            return f"{where}.{field} is missing, empty or not a string"
+    scope = link.get("scope")
+    if not isinstance(scope, list) or not all(isinstance(entry, str) for entry in scope):
+        return f"{where}.scope is not an array of strings"
+    # The format makes lexicographic comparison chronological comparison.
+    for field in ("issuedAt", "expiresAt"):
+        value = link.get(field)
+        if not isinstance(value, str) or _LINK_TIMESTAMP_RE.fullmatch(value) is None:
+            return f"{where}.{field} is not a YYYY-MM-DDTHH:MM:SSZ timestamp"
+    if i > 0 and link.get("previousSignatureRef") != f"links[{i - 1}].signature":
+        return f'{where}.previousSignatureRef is not "links[{i - 1}].signature"'
+    if not isinstance(link.get("signature"), str):
+        return f"{where}.signature is missing or not a string"
+    # A link is signed over its JCS form, which a lone surrogate cannot enter.
+    if _has_lone_surrogate(link):
+        return f"{where} holds a lone surrogate"
+    return None
+
+
+def _evaluate_chain(fixture: dict[str, Any], wire_key: Ed25519PublicKey) -> dict[str, Any]:
+    env = fixture["envelope"]
+    links = env["links"]
+    if not links:
+        return _envelope_failure("envelope.links is empty")
+    if env["depth"] != len(links):
+        return _envelope_failure("envelope.depth is not the number of links in envelope.links")
+    keys = []
+    for i, link in enumerate(links):
+        where = f"envelope.links[{i}]"
+        reason = _link_shape_error(link, i, where)
+        if reason is not None:
+            return _envelope_failure(reason)
+        key, reason = _envelope_key(fixture, wire_key, link["issuerKeyid"], f"{where}.issuerKeyid")
+        if reason is not None:
+            return _envelope_failure(reason)
+        keys.append(key)
+
+    if len(links) > env["maxDepth"]:
+        return _reject(
+            "DEPTH_EXCEEDED",
+            f"the chain has {len(links)} links, more than envelope.maxDepth {_json_text(env['maxDepth'])}",
+        )
+    for i, link in enumerate(links):
+        where = f"envelope.links[{i}]"
+        previous = links[i - 1] if i > 0 else None
+        if previous is not None and link["issuerKeyid"] != previous["subjectKeyid"]:
+            return _reject(
+                "CHAIN_BROKEN", f"{where}.issuerKeyid is not the subjectKeyid of envelope.links[{i - 1}]"
+            )
+        payload = _link_payload(link, previous["signature"] if previous is not None else None)
+        if not _verifies_over_jcs(keys[i], payload, link["signature"]):
+            return _reject(
+                "LINK_SIGNATURE_INVALID",
+                f"{where}.signature does not verify over the JCS form of the link payload",
+            )
+        if previous is None:
+            continue
+        granted = set(previous["scope"])
+        widened = next((entry for entry in link["scope"] if entry not in granted), None)
+        if widened is not None:
+            return _reject(
+                "SCOPE_WIDENED",
+                f"{where}.scope grants {widened}, which envelope.links[{i - 1}].scope does not",
+            )
+        if link["expiresAt"] > previous["expiresAt"]:
+            return _reject(
+                "EXPIRY_EXTENDED",
+                f"{where}.expiresAt {link['expiresAt']} is later than "
+                f"envelope.links[{i - 1}].expiresAt {previous['expiresAt']}",
+            )
+    last = links[-1]
+    if last["subjectKeyid"] != fixture["signatureParams"]["keyid"]:
+        return _reject(
+            "CHAIN_BROKEN",
+            "the subjectKeyid of the last link is not signatureParams.keyid, "
+            "the key that signed the request",
+        )
+    request = f"{fixture['input']['method'].upper()} {fixture['input']['path']}"
+    if request not in last["scope"]:
+        return _reject("REQUEST_OUT_OF_SCOPE", f"the scope of the last link does not grant {request}")
+    return {"verdict": "ACCEPT"}
+
+
+def _outside_jcs_domain(value: Any) -> bool:
+    """True when `value` holds a number, a boolean or null, which the JCS form
+    that _jcs writes does not cover. Iterative for the reason given in _jcs."""
+    todo = [value]
+    while todo:
+        item = todo.pop()
+        if isinstance(item, str):
+            continue
+        if isinstance(item, list):
+            todo.extend(item)
+        elif isinstance(item, dict):
+            todo.extend(item.values())
+        else:
+            return True
+    return False
+
+
+def _evaluate_receipt(
+    fixture: dict[str, Any], wire_key: Ed25519PublicKey, wire_signature: bytes
+) -> dict[str, Any]:
+    request = fixture["envelope"]["request"]
+    response = fixture["envelope"]["response"]
+    payload = response["receiptPayloadJcs"]
+    where = "envelope.response.receiptPayloadJcs"
+    for member in RECEIPT_SIGNED_MEMBERS:
+        if not isinstance(payload.get(member), str):
+            return _envelope_failure(f"{where}.{member} is missing or not a string")
+    if _outside_jcs_domain(payload):
+        return _envelope_failure(f"{where} holds a value that is not a string, an array or an object")
+    if _has_lone_surrogate(payload):
+        return _envelope_failure(f"{where} holds a lone surrogate")
+    key, reason = _envelope_key(fixture, wire_key, payload["responderKeyid"], f"{where}.responderKeyid")
+    if reason is not None:
+        return _envelope_failure(reason)
+
+    if not _verifies_over_jcs(key, payload, response["responderSignatureBase64"]):
+        return _reject(
+            "RECEIPT_SIGNATURE_INVALID",
+            f"envelope.response.responderSignatureBase64 does not verify over the JCS form of {where}",
+        )
+    # The receipt acknowledges this request: the signature the wire layer just
+    # verified, from the keyid that produced it.
+    if payload["initiatorSignatureBase64"] != base64.b64encode(wire_signature).decode("ascii"):
+        return _reject("RECEIPT_MISMATCH", f"{where}.initiatorSignatureBase64 is not the signature of this request")
+    keyid = fixture["signatureParams"]["keyid"]
+    for field, value in (
+        (f"{where}.initiatorKeyid", payload["initiatorKeyid"]),
+        ("envelope.request.initiatorKeyid", request["initiatorKeyid"]),
+    ):
+        if value != keyid:
+            return _reject("RECEIPT_MISMATCH", f"{field} is not signatureParams.keyid")
+    # The response members beside the payload state what the responder signed.
+    for member in ("responderKeyid", "respondedAt", "status"):
+        if response[member] != payload[member]:
+            return _reject(
+                "RECEIPT_MISMATCH",
+                f"envelope.response.{member} is not {where}.{member}, which the responder signed",
+            )
+    return {"verdict": "ACCEPT"}
 
 
 # --- level fixtures (A2A-IDF §1 verification levels) ------------------------------
@@ -1212,7 +1493,11 @@ def _json_member_name(text: str, idx: int) -> tuple[str, int]:
 
 
 def verify_fixture(path: Path) -> tuple[bool, str | None, list[str]]:
-    fixture = _load_json(path.read_text(encoding="utf-8"))
+    try:
+        fixture = _load_json(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        # Worded as verify.mjs words a JSON.parse syntax error.
+        raise ValueError(f"fixture is not valid JSON: {exc}") from None
     schemas = load_schemas()
     family = fixture_family(fixture, schemas)
     violation = schema_violation(schemas[family], fixture, "")
@@ -1315,6 +1600,9 @@ def main() -> int:
         print(USAGE, file=sys.stderr)
         print("verify.py: an empty argument is not a path", file=sys.stderr)
         return 2
+    if MISSING_DEPENDENCY is not None:
+        print(MISSING_DEPENDENCY, file=sys.stderr)
+        return 2
 
     # A stdout that is not UTF-8 may not encode every character of a line: print
     # such a character escaped instead of raising while reporting.
@@ -1323,6 +1611,10 @@ def main() -> int:
     paths = [entry for arg in path_args for entry in collect_fixtures(arg)]
     pass_count = 0
     fail_count = 0
+    # A fixture the verifier could not evaluate (ERROR) is counted apart from
+    # one that missed its pinned outcome (FAIL), so a path typo does not read as
+    # a conformance failure. Either one makes the exit code 1.
+    error_count = 0
     for path, listing_error in paths:
         try:
             if listing_error is not None:
@@ -1341,11 +1633,13 @@ def main() -> int:
             for line in lines:
                 _print(f"      {line}", json_text)
         except Exception as exc:
-            fail_count += 1
+            error_count += 1
             _print(f"ERROR {path}")
             _print(f"      {exc}")
-    print(f"summary: {pass_count} pass, {fail_count} fail ({len(paths)} fixtures)")
-    return 0 if fail_count == 0 else 1
+    print(
+        f"summary: {pass_count} pass, {fail_count} fail, {error_count} error ({len(paths)} fixtures)"
+    )
+    return 0 if fail_count == 0 and error_count == 0 else 1
 
 
 _CONTROL = re.compile("[\x00-\x1f\x7f-\x9f]")

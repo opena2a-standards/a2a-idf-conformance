@@ -31,7 +31,8 @@ verifier name already in use) end the run before PATH is opened, so they leave
 it as it was. An existing file keeps its content until the report is written
 in its place; a path that did not exist is created when it is opened, and
 stays empty when the run ends before the report is written (no fixtures
-found). With `--json` given twice, only the second path is opened.
+found). With `--json` given more than once, only the last path is opened,
+and a line on stderr names it.
 
 `--verifier` adds an implementation under test. COMMAND is split with
 shell-style quoting (no shell is invoked), run from the current directory, and
@@ -352,7 +353,8 @@ def main(prog: str | None = None, version: str | None = None) -> int:
             version=version,
             help="show the package name and version and exit; the word version alone does the same",
         )
-    ap.add_argument("--json", metavar="PATH", help="write a JSON parity report")
+    # Every `--json` is kept, so a repeated one is noticed (see below).
+    ap.add_argument("--json", metavar="PATH", action="append", help="write a JSON parity report")
     ap.add_argument(
         "--verifier",
         metavar="NAME=COMMAND",
@@ -382,10 +384,19 @@ def main(prog: str | None = None, version: str | None = None) -> int:
     # `--json` would be handled once the file was already open.
     report = None
     if args.json is not None:
+        # The report goes to one file: the last `--json` given, as argparse
+        # would keep it. A repeated one is a line on stderr naming that path,
+        # so the paths before it are not left unwritten without notice.
+        report_path = args.json[-1]
         try:
-            report = open_report(args.json)
+            report = open_report(report_path)
         except OSError as exc:
-            ap.error(f"argument --json: cannot write {args.json!r}: {exc.strerror}")
+            ap.error(f"argument --json: cannot write {report_path!r}: {exc.strerror}")
+        if len(args.json) > 1:
+            sys.stderr.write(
+                f"[parity] --json given {len(args.json)} times: the report is written to "
+                f"{report_path!r} only\n"
+            )
 
     fixture_files = sorted(
         p.relative_to(FIXTURES_DIR).as_posix() for p in FIXTURES_DIR.rglob("*.json")

@@ -5,7 +5,8 @@
 //
 // Handles both fixture families:
 //   - composition fixtures (fixtures/composition/**): RFC 9421 wire signature
-//     + A2A-IDF §6 dual-shape keyid resolution
+//     + A2A-IDF §6 dual-shape keyid resolution, and the delegation-chain or
+//     bilateral-receipt envelope a fixture wraps the request in (§7, §8)
 //   - level fixtures (fixtures/levels/**): A2A-IDF §1 verification levels
 //     (SELF_ASSERTED / DOMAIN_VERIFIED / ORGANIZATION_VERIFIED)
 // Every fixture is first checked against its family's schema in ../schemas/;
@@ -18,6 +19,8 @@
 // than "-" alone, is an unknown option, never a fixture path; every argument
 // after "--" is a path. An empty argument is a usage error, not the current
 // directory.
+// The last line counts the fixtures that passed, failed (missed the pinned
+// outcome) and could not be evaluated (ERROR), each apart.
 // Exit code: 0 if every fixture's expected verdict (and reject category,
 // when pinned) is met, else 1; 2 for a usage error (no path, an empty
 // argument, or an unknown option).
@@ -313,8 +316,9 @@ function gateVerdict(path, expected, verdict, category) {
 // --- composition fixtures (RFC 9421 wire layer + §6 keyid resolution) ----------
 
 // The fixture has passed the schema stage (verifyFixture), so its required
-// blocks are present and the optional crossSuiteEquivalence block and its
-// `envoys` member, when present, are JSON objects.
+// blocks are present, the optional crossSuiteEquivalence block and its
+// `envoys` member, when present, are JSON objects, and an envelope, when
+// present, is a JSON object of a known type with the members that type needs.
 function verifyCompositionFixture(fixture, path) {
   const expected = fixture.expected;
 
@@ -441,9 +445,246 @@ function verifyCompositionFixture(fixture, path) {
     }
   }
 
+  // The envelope, when the fixture carries one, is checked once the wire
+  // signature it wraps has verified.
+  if (observed.verdict === "ACCEPT" && fixture.envelope !== undefined) {
+    const envelope = evaluateEnvelope(fixture, publicKey, sigBytes);
+    if (envelope.stage !== undefined) {
+      return { path, ok: false, stage: envelope.stage, reason: envelope.reason };
+    }
+    observed = envelope;
+  }
+
   const gate = gateVerdict(path, expected, observed.verdict, observed.category);
   if (!gate.ok && observed.reason) gate.reason += ` (${observed.reason})`;
   return gate;
+}
+
+// --- envelopes (A2A-IDF §7 delegation chains, §8 bilateral receipts) -------------
+
+// An envelope member the checks cannot read (a link that is not an object, a
+// timestamp in another format, a keyid without a key) fails the fixture at
+// stage `envelope`, as a key that cannot be extracted fails it at stage
+// public-key-extraction. An envelope that can be read and breaks a rule is a
+// REJECT. The check order is part of the cross-implementation contract; it is
+// listed under "envelope" in fixtures/composition/SCHEMA.md.
+const CHAIN_ENVELOPE = "aps-delegation-chain-v1";
+const RECEIPT_SIGNED_MEMBERS = ["initiatorSignatureBase64", "initiatorKeyid", "respondedAt", "responderKeyid", "status"];
+
+function envelopeFailure(reason) {
+  return { stage: "envelope", reason };
+}
+
+// `wireKey` is the key the wire signature verified with and `wireSignature`
+// the signature bytes it verified.
+function evaluateEnvelope(fixture, wireKey, wireSignature) {
+  // The wire keyid resolves through keyidResolution, so an entry for it here
+  // would be a second key for one keyid.
+  if (Object.hasOwn(fixture.envelope.keyidResolutions, fixture.signatureParams.keyid)) {
+    return envelopeFailure(
+      "envelope.keyidResolutions holds an entry for signatureParams.keyid, which resolves through keyidResolution",
+    );
+  }
+  return fixture.envelope.type === CHAIN_ENVELOPE
+    ? evaluateChain(fixture, wireKey)
+    : evaluateReceipt(fixture, wireKey, wireSignature);
+}
+
+// The key of `keyid`, which the envelope names at `where`: the wire key for the
+// wire keyid, else the key of the keyid's entry in envelope.keyidResolutions.
+// Returns { key } or { reason }.
+function envelopeKey(fixture, wireKey, keyid, where) {
+  if (keyid === fixture.signatureParams.keyid) return { key: wireKey };
+  const resolutions = fixture.envelope.keyidResolutions;
+  if (!Object.hasOwn(resolutions, keyid)) {
+    return { reason: `envelope.keyidResolutions has no entry for ${where}` };
+  }
+  const kr = resolutions[keyid];
+  const readable =
+    jsonType(kr) === "object" &&
+    ((kr.shape === "compact" && typeof kr.publicKeyPem === "string") ||
+      (kr.shape === "did-json" && jsonType(kr.document) === "object"));
+  if (!readable) {
+    return {
+      reason: `the envelope.keyidResolutions entry for ${where} is not a compact or did-json keyidResolution`,
+    };
+  }
+  try {
+    return { key: extractPublicKeyFromKeyidResolution(kr) };
+  } catch (err) {
+    return { reason: `the envelope.keyidResolutions entry for ${where}: ${err.message}` };
+  }
+}
+
+// Whether `signature`, the base64 text of a 64-byte Ed25519 signature, verifies
+// with `key` over the UTF-8 bytes of the JCS form of `payload`. Text that is not
+// exactly the base64 encoding of the bytes it decodes to does not verify.
+function verifiesOverJcs(key, payload, signature) {
+  const sig = Buffer.from(signature, "base64");
+  if (sig.length !== 64 || sig.toString("base64") !== signature) return false;
+  return cryptoVerify(null, Buffer.from(jcs(payload), "utf-8"), key, sig);
+}
+
+// What the issuer of a link signs: the link's own fields and, for a derived
+// link, previousSignature, the signature of the link before it.
+function linkPayload(link, previousSignature) {
+  const payload = {
+    type: link.type,
+    issuerKeyid: link.issuerKeyid,
+    subjectKeyid: link.subjectKeyid,
+    scope: link.scope,
+    issuedAt: link.issuedAt,
+    expiresAt: link.expiresAt,
+  };
+  if (previousSignature !== undefined) payload.previousSignature = previousSignature;
+  return payload;
+}
+
+// Why link `i` cannot be read, or null.
+function linkShapeError(link, i, where) {
+  if (jsonType(link) !== "object") return `${where} is not a JSON object`;
+  if (jsonType(link.index) !== "integer" || link.index !== i) return `${where}.index is not ${i}`;
+  const type = i === 0 ? "root" : "derived";
+  if (link.type !== type) return `${where}.type is not "${type}"`;
+  for (const field of ["issuerKeyid", "subjectKeyid"]) {
+    if (!isNonEmptyString(link[field])) return `${where}.${field} is missing, empty or not a string`;
+  }
+  if (!Array.isArray(link.scope) || !link.scope.every((entry) => typeof entry === "string")) {
+    return `${where}.scope is not an array of strings`;
+  }
+  // The format makes lexicographic comparison chronological comparison.
+  for (const field of ["issuedAt", "expiresAt"]) {
+    if (!isTimestamp(link[field])) return `${where}.${field} is not a YYYY-MM-DDTHH:MM:SSZ timestamp`;
+  }
+  if (i > 0 && link.previousSignatureRef !== `links[${i - 1}].signature`) {
+    return `${where}.previousSignatureRef is not "links[${i - 1}].signature"`;
+  }
+  if (typeof link.signature !== "string") return `${where}.signature is missing or not a string`;
+  // A link is signed over its JCS form, which a lone surrogate cannot enter.
+  if (hasLoneSurrogate(link)) return `${where} holds a lone surrogate`;
+  return null;
+}
+
+function evaluateChain(fixture, wireKey) {
+  const env = fixture.envelope;
+  const links = env.links;
+  if (links.length === 0) return envelopeFailure("envelope.links is empty");
+  if (env.depth !== links.length) {
+    return envelopeFailure("envelope.depth is not the number of links in envelope.links");
+  }
+  const keys = [];
+  for (const [i, link] of links.entries()) {
+    const where = `envelope.links[${i}]`;
+    const reason = linkShapeError(link, i, where);
+    if (reason !== null) return envelopeFailure(reason);
+    const resolved = envelopeKey(fixture, wireKey, link.issuerKeyid, `${where}.issuerKeyid`);
+    if (resolved.reason !== undefined) return envelopeFailure(resolved.reason);
+    keys.push(resolved.key);
+  }
+
+  if (links.length > env.maxDepth) {
+    return reject(
+      "DEPTH_EXCEEDED",
+      `the chain has ${links.length} links, more than envelope.maxDepth ${jsonText(env.maxDepth)}`,
+    );
+  }
+  for (const [i, link] of links.entries()) {
+    const where = `envelope.links[${i}]`;
+    const previous = links[i - 1];
+    if (i > 0 && link.issuerKeyid !== previous.subjectKeyid) {
+      return reject("CHAIN_BROKEN", `${where}.issuerKeyid is not the subjectKeyid of envelope.links[${i - 1}]`);
+    }
+    if (!verifiesOverJcs(keys[i], linkPayload(link, previous?.signature), link.signature)) {
+      return reject("LINK_SIGNATURE_INVALID", `${where}.signature does not verify over the JCS form of the link payload`);
+    }
+    if (i === 0) continue;
+    const granted = new Set(previous.scope);
+    const widened = link.scope.find((entry) => !granted.has(entry));
+    if (widened !== undefined) {
+      return reject("SCOPE_WIDENED", `${where}.scope grants ${widened}, which envelope.links[${i - 1}].scope does not`);
+    }
+    if (link.expiresAt > previous.expiresAt) {
+      return reject(
+        "EXPIRY_EXTENDED",
+        `${where}.expiresAt ${link.expiresAt} is later than envelope.links[${i - 1}].expiresAt ${previous.expiresAt}`,
+      );
+    }
+  }
+  const last = links[links.length - 1];
+  if (last.subjectKeyid !== fixture.signatureParams.keyid) {
+    return reject(
+      "CHAIN_BROKEN",
+      "the subjectKeyid of the last link is not signatureParams.keyid, the key that signed the request",
+    );
+  }
+  const request = `${fixture.input.method.toUpperCase()} ${fixture.input.path}`;
+  if (!last.scope.includes(request)) {
+    return reject("REQUEST_OUT_OF_SCOPE", `the scope of the last link does not grant ${request}`);
+  }
+  return { verdict: "ACCEPT" };
+}
+
+// True when `root` holds a number, a boolean or null, which the JCS form that
+// jcs() writes does not cover. Iterative for the reason given at jcs().
+function outsideJcsDomain(root) {
+  const todo = [root];
+  while (todo.length > 0) {
+    const value = todo.pop();
+    if (typeof value === "string") continue;
+    if (Array.isArray(value)) {
+      for (const v of value) todo.push(v);
+    } else if (value !== null && typeof value === "object") {
+      for (const v of Object.values(value)) todo.push(v);
+    } else {
+      return true;
+    }
+  }
+  return false;
+}
+
+function evaluateReceipt(fixture, wireKey, wireSignature) {
+  const { request, response } = fixture.envelope;
+  const payload = response.receiptPayloadJcs;
+  const where = "envelope.response.receiptPayloadJcs";
+  for (const member of RECEIPT_SIGNED_MEMBERS) {
+    if (typeof payload[member] !== "string") return envelopeFailure(`${where}.${member} is missing or not a string`);
+  }
+  if (outsideJcsDomain(payload)) {
+    return envelopeFailure(`${where} holds a value that is not a string, an array or an object`);
+  }
+  if (hasLoneSurrogate(payload)) return envelopeFailure(`${where} holds a lone surrogate`);
+  const resolved = envelopeKey(fixture, wireKey, payload.responderKeyid, `${where}.responderKeyid`);
+  if (resolved.reason !== undefined) return envelopeFailure(resolved.reason);
+
+  if (!verifiesOverJcs(resolved.key, payload, response.responderSignatureBase64)) {
+    return reject(
+      "RECEIPT_SIGNATURE_INVALID",
+      `envelope.response.responderSignatureBase64 does not verify over the JCS form of ${where}`,
+    );
+  }
+  // The receipt acknowledges this request: the signature the wire layer just
+  // verified, from the keyid that produced it.
+  if (payload.initiatorSignatureBase64 !== wireSignature.toString("base64")) {
+    return reject("RECEIPT_MISMATCH", `${where}.initiatorSignatureBase64 is not the signature of this request`);
+  }
+  for (const [field, value] of [
+    [`${where}.initiatorKeyid`, payload.initiatorKeyid],
+    ["envelope.request.initiatorKeyid", request.initiatorKeyid],
+  ]) {
+    if (value !== fixture.signatureParams.keyid) {
+      return reject("RECEIPT_MISMATCH", `${field} is not signatureParams.keyid`);
+    }
+  }
+  // The response members beside the payload state what the responder signed.
+  for (const member of ["responderKeyid", "respondedAt", "status"]) {
+    if (response[member] !== payload[member]) {
+      return reject(
+        "RECEIPT_MISMATCH",
+        `envelope.response.${member} is not ${where}.${member}, which the responder signed`,
+      );
+    }
+  }
+  return { verdict: "ACCEPT" };
 }
 
 // --- level fixtures (A2A-IDF §1 verification levels) ----------------------------
@@ -808,8 +1049,21 @@ function schemaViolation(schema, value, path) {
 
 // --- driver ---------------------------------------------------------------------
 
+// A fixture that is not JSON text is an input error, as a path that cannot be
+// read is: main() reports its message, not a stack trace.
+class NotJsonError extends Error {}
+
+function parseFixture(text) {
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    throw new NotJsonError(`fixture is not valid JSON: ${error.message}`);
+  }
+}
+
 function verifyFixture(path) {
-  const fixture = JSON.parse(readFileSync(path, "utf-8"));
+  const fixture = parseFixture(readFileSync(path, "utf-8"));
   const schemas = loadSchemas();
   const family = fixtureFamily(fixture, schemas);
   const violation = schemaViolation(schemas[family], fixture, "");
@@ -949,6 +1203,10 @@ function main() {
   const paths = pathArgs.flatMap(collectFixtures);
   let passCount = 0;
   let failCount = 0;
+  // A fixture the verifier could not evaluate (ERROR) is counted apart from one
+  // that missed its pinned outcome (FAIL), so a path typo does not read as a
+  // conformance failure. Either one makes the exit code 1.
+  let errorCount = 0;
   for (const { path: abs, error: listingError } of paths) {
     try {
       if (listingError !== undefined) throw listingError;
@@ -973,24 +1231,26 @@ function main() {
         }
       }
     } catch (err) {
-      failCount++;
+      errorCount++;
       report(`ERROR ${abs}`);
-      // A failed system call (ENOENT, ENOTDIR, EACCES, ELOOP) and an entry the
-      // walk does not read are problems with the input, and their message names
-      // the path; a stack trace is kept for a verifier fault. The trace is one
-      // report line, its line feeds written as \u000a, because its message can
-      // quote fixture text (an unsupported component error quotes the component
-      // value, and a JSON.parse syntax error can quote the text around the
-      // error) and a line feed there would start a line the parity gate reads.
+      // A failed system call (ENOENT, ENOTDIR, EACCES, ELOOP), an entry the walk
+      // does not read and a fixture that is not JSON text are problems with the
+      // input, so their message is printed alone: a system call's message names
+      // the path, and fixtureListing() and parseFixture() word the other two. A
+      // stack trace is kept for a verifier fault. Either is one report line, its
+      // line feeds written as \u000a, because its message can quote fixture text
+      // (an unsupported component error quotes the component value, and a
+      // JSON.parse syntax error can quote the text around the error) and a line
+      // feed there would start a line the parity gate reads.
       // collectFixtures walks directories, so no directory is read as a file
       // (EISDIR, whose message names no path).
-      const inputError = err.syscall !== undefined || err === listingError;
+      const inputError = err.syscall !== undefined || err === listingError || err instanceof NotJsonError;
       if (inputError) report(`      ${err.message}`);
       else report(`      ${err.stack ?? err.message}`);
     }
   }
-  console.log(`summary: ${passCount} pass, ${failCount} fail (${paths.length} fixtures)`);
-  process.exit(failCount === 0 ? 0 : 1);
+  console.log(`summary: ${passCount} pass, ${failCount} fail, ${errorCount} error (${paths.length} fixtures)`);
+  process.exit(failCount === 0 && errorCount === 0 ? 0 : 1);
 }
 
 main();

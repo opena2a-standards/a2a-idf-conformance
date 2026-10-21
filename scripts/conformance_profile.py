@@ -10,9 +10,16 @@ set: regeneration is deterministic and CI verifies the committed file matches.
 Usage:
     python3 scripts/conformance_profile.py            # (re)write conformance.json
     python3 scripts/conformance_profile.py --check    # exit 1 if committed file is stale
+    python3 scripts/conformance_profile.py --help
+
+The arguments are read before any file is: `--help` (or `-h`) prints the
+usage, and any argument other than `--check` (an unknown option, an
+abbreviation such as `--che`, or a word) is a usage error, exit 2. Neither
+writes conformance.json.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import sys
@@ -36,7 +43,7 @@ SUITE = {
         {
             "language": "node",
             "path": "scripts/verify.mjs",
-            "coverage": "full: composition (RFC 9421 wire layer + §6 dual-shape keyid resolution) and levels (§1 SELF_ASSERTED / DOMAIN_VERIFIED / ORGANIZATION_VERIFIED)",
+            "coverage": "full: composition (RFC 9421 wire layer + §6 dual-shape keyid resolution + §7 delegation-chain and §8 bilateral-receipt envelopes) and levels (§1 SELF_ASSERTED / DOMAIN_VERIFIED / ORGANIZATION_VERIFIED)",
         },
         {
             "language": "python",
@@ -50,12 +57,8 @@ SUITE = {
             "reason": "fixtures pin the TXT record content; live resolution is deployment behavior, not byte-stable",
         },
         {
-            "specSection": "§7 Delegation chains — per-link signatures and chain-rule enforcement",
-            "reason": "envelope shapes pinned in fixtures; deeper verification lands once APS delegation schemas stabilize",
-        },
-        {
-            "specSection": "§8 Bilateral receipts — responder signature over the JCS receipt payload",
-            "reason": "same APS schema-stability dependency as delegation chains",
+            "specSection": "§7 and §8 envelopes — link and receipt timestamps against the time of verification",
+            "reason": "the envelope fixtures pin no verification time, so neither verifier compares issuedAt, expiresAt or respondedAt with a clock",
         },
         {
             "specSection": "v1.1 Vouching attestations",
@@ -72,8 +75,9 @@ SUITE = {
 # Coverage claims in README.md and docs/coverage.md must not outrun
 # `notCovered`. While one of these sections is listed there, any line of those
 # documents that states this repository's coverage and names the envelope must
-# mark it "(unverified)". Removing the notCovered entry (once the verifiers
-# check the envelope) lifts the requirement.
+# mark it "(unverified)". Both reference verifiers check both envelopes, so
+# notCovered lists neither section and the rule applies again only if one is
+# listed there.
 UNVERIFIED_ENVELOPES = {
     "§7 Delegation chains": "delegation chain",
     "§8 Bilateral receipts": "bilateral receipt",
@@ -321,6 +325,20 @@ def build() -> dict:
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Write conformance.json, the conformance profile derived from the fixtures, "
+        "or check that the committed file is current.",
+        # An option must be spelled in full, so `--che` is reported instead of
+        # being taken for `--check`.
+        allow_abbrev=False,
+    )
+    ap.add_argument(
+        "--check",
+        action="store_true",
+        help="check conformance.json and the coverage claims of the documents instead of "
+        "writing the file; exit 1 when one is stale or wrong",
+    )
+    args = ap.parse_args()
     try:
         profile = build()
     except FixtureError as err:
@@ -329,7 +347,7 @@ def main() -> int:
     # The whole profile is encoded before conformance.json is opened, so a
     # profile that cannot be encoded leaves the file as it was.
     rendered = encode(profile)
-    if "--check" in sys.argv:
+    if args.check:
         if not OUT.exists():
             print("conformance.json missing; run scripts/conformance_profile.py")
             return 1

@@ -63,7 +63,7 @@
                   "\r": "Carriage Return",
                   "דּ": "Hebrew Letter Dalet With Dagesh",
                   "😀": "Emoji: Grinning Face",
-                  "": "Control",
+                  "\u0080": "Control",
                   "ö": "Latin Small Letter O With Diaeresis"
                 },
                 "signature": "kRkSVnuposGLoK4SOh9K5fPywOY_24gMGPetE0jLkAjEsxuwPoYHaiDuMrDsFn5UoSQBUuIUAB3VOveUW1UjDw"
