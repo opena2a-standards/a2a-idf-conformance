@@ -966,6 +966,14 @@ const USAGE = {
   python: "usage: python3 verify.py <fixture.json | directory> [...]",
 };
 const PROGRAM = { node: "verify.mjs", python: "verify.py" };
+// The exit-code line --help prints. verify.py also exits 2 without the
+// cryptography package, a case verify.mjs, which imports only Node built-ins,
+// does not have.
+const EXIT_CODES = {
+  node: "Exit code: 0 when every fixture meets its pinned outcome, 1 otherwise, 2 for a usage error.",
+  python:
+    "Exit code: 0 when every fixture meets its pinned outcome, 1 otherwise, 2 for a usage error or a missing cryptography package.",
+};
 const LEVEL_0 = join(REPO, "fixtures/levels/level-0-self-asserted.json");
 
 function runVerifierArgs([command, ...args], argv, options = {}) {
@@ -980,12 +988,7 @@ for (const option of ["--help", "-h"]) {
       assert.equal(result.stderr, "", name);
       assert.deepEqual(
         result.stdout.split("\n"),
-        [
-          USAGE[name],
-          "Directories are walked recursively for *.json fixtures.",
-          "Exit code: 0 when every fixture meets its pinned outcome, 1 otherwise, 2 for a usage error.",
-          "",
-        ],
+        [USAGE[name], "Directories are walked recursively for *.json fixtures.", EXIT_CODES[name], ""],
         name,
       );
     }
@@ -1100,8 +1103,9 @@ test("an option decides before an empty argument is checked in both verifiers", 
 // Without the cryptography package, verify.py ended in a ModuleNotFoundError
 // traceback, exit 1. It prints one line naming the package and the command that
 // installs it, exit 2, once the arguments are read, so --help and a usage error
-// do not need the package. `python3 -S` leaves site-packages, where pip installs
-// it, off the module path.
+// do not need the package. The exit-code line of --help gave 2 for a usage error
+// only; it names this case too. `python3 -S` leaves site-packages, where pip
+// installs it, off the module path.
 test("verify.py reports a missing cryptography package in one line, exit 2", (t) => {
   const [python, script] = VERIFIERS.python;
   const env = { ...process.env };
@@ -1121,7 +1125,12 @@ test("verify.py reports a missing cryptography package in one line, exit 2", (t)
   );
   const help = run("--help");
   assert.equal(help.status, 0, help.stdout + help.stderr);
-  assert.ok(help.stdout.startsWith(`${USAGE.python}\n`), help.stdout);
+  assert.deepEqual(help.stdout.split("\n"), [
+    USAGE.python,
+    "Directories are walked recursively for *.json fixtures.",
+    EXIT_CODES.python,
+    "",
+  ]);
   const unknown = run("--verbose");
   assert.equal(unknown.status, 2, unknown.stdout + unknown.stderr);
   assert.equal(unknown.stderr, `${USAGE.python}\nverify.py: unknown option: --verbose\n`);

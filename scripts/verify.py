@@ -1570,7 +1570,9 @@ USAGE = "usage: python3 verify.py <fixture.json | directory> [...]"
 HELP = (
     f"{USAGE}\n"
     "Directories are walked recursively for *.json fixtures.\n"
-    "Exit code: 0 when every fixture meets its pinned outcome, 1 otherwise, 2 for a usage error."
+    # main() exits 2 with MISSING_DEPENDENCY once the arguments are read.
+    "Exit code: 0 when every fixture meets its pinned outcome, 1 otherwise, 2 for a usage error"
+    " or a missing cryptography package."
 )
 
 
