@@ -101,7 +101,7 @@ for (const [label, field, mutate] of [
     }
     assert.equal(
       outcomes.node,
-      ["FAIL", "      stage:  schema", `      reason: ${field} is present but is not a JSON object`, "summary: 0 pass, 1 fail (1 fixtures)", ""].join("\n"),
+      ["FAIL", "      stage:  schema", `      reason: ${field} is present but is not a JSON object`, "summary: 0 pass, 1 fail, 0 error (1 fixtures)", ""].join("\n"),
     );
     assert.equal(outcomes.python, outcomes.node);
   });
@@ -126,10 +126,41 @@ for (const constant of ["NaN", "Infinity", "-Infinity"]) {
       const lines = result.stdout.split("\n");
       assert.match(lines[0], /^ERROR .*variant\.json$/, name);
       assert.doesNotMatch(result.stdout, /observed:/, name);
-      assert.deepEqual(lines.slice(-2), ["summary: 0 pass, 1 fail (1 fixtures)", ""], name);
+      assert.deepEqual(lines.slice(-2), ["summary: 0 pass, 0 fail, 1 error (1 fixtures)", ""], name);
     }
   });
 }
+
+// A fixture that is not JSON text is a problem with the input, as a path that
+// cannot be read is, so both verifiers print the parser's message after
+// "fixture is not valid JSON: ". verify.mjs printed its stack trace instead, on
+// one reason line of several hundred characters, its line feeds written as
+// \u000a.
+test("a fixture that is not JSON text is reported with a short reason by both verifiers", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "verify-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const texts = {
+    "markdown.json": "# A2A-IDF conformance suite",
+    "nan.json": '{"a": NaN}',
+    "truncated.json": '{"name": ',
+  };
+  for (const [file, text] of Object.entries(texts)) writeFileSync(join(dir, file), text);
+  for (const [name, argv] of Object.entries(VERIFIERS)) {
+    for (const file of Object.keys(texts)) {
+      const label = `${name} ${file}`;
+      const result = runVerifier(argv, join(dir, file));
+      assert.equal(result.status, 1, `${label}: ${result.stdout}${result.stderr}`);
+      assert.equal(result.stderr, "", label);
+      const lines = result.stdout.split("\n");
+      assert.equal(lines.length, 4, `${label}: ${result.stdout}`);
+      assert.equal(lines[0], `ERROR ${join(dir, file)}`, label);
+      assert.ok(lines[1].startsWith("      fixture is not valid JSON: "), `${label}: ${lines[1]}`);
+      assert.doesNotMatch(lines[1], /\\u000a +at /, label);
+      assert.ok(lines[1].length < 200, `${label}: ${lines[1].length} characters`);
+      assert.deepEqual(lines.slice(2), ["summary: 0 pass, 0 fail, 1 error (1 fixtures)", ""], label);
+    }
+  }
+});
 
 // Runs both verifiers once over a scratch directory holding `variants`, an
 // object of file name to fixture text, and returns each verifier's output as
@@ -903,7 +934,26 @@ test("a fixture path that does not exist is reported as ERROR by both verifiers"
     const lines = result.stdout.split("\n");
     assert.match(lines[0], /^ERROR .*missing\.json$/, name);
     assert.match(lines[1], /^ {6}.*no such file or directory.*missing\.json/i, name);
-    assert.deepEqual(lines.slice(2), ["summary: 0 pass, 1 fail (1 fixtures)", ""], name);
+    assert.deepEqual(lines.slice(2), ["summary: 0 pass, 0 fail, 1 error (1 fixtures)", ""], name);
+  }
+});
+
+// A fixture the verifier could not evaluate (ERROR) is counted apart from one
+// that missed its pinned outcome (FAIL): both verifiers counted an ERROR as a
+// fail, so a path typo read as a conformance failure. Either makes the exit
+// code 1.
+test("both verifiers count errors apart from failures in the summary line", (t) => {
+  const { dir } = scratchFixtureDir(t);
+  writeFileSync(join(dir, "failing.json"), readFileSync(writeAcceptVariant(t, () => {})));
+  writeFileSync(join(dir, "not-json.json"), "not JSON");
+  for (const [name, argv] of Object.entries(VERIFIERS)) {
+    const result = runVerifier(argv, dir);
+    assert.equal(result.status, 1, `${name}: ${result.stdout}${result.stderr}`);
+    const lines = result.stdout.split("\n");
+    assert.ok(lines.includes(`PASS  ${join(dir, "valid.json")}`), `${name}: ${result.stdout}`);
+    assert.ok(lines.includes(`FAIL  ${join(dir, "failing.json")}`), `${name}: ${result.stdout}`);
+    assert.ok(lines.includes(`ERROR ${join(dir, "not-json.json")}`), `${name}: ${result.stdout}`);
+    assert.deepEqual(lines.slice(-2), ["summary: 1 pass, 1 fail, 1 error (3 fixtures)", ""], name);
   }
 });
 
@@ -983,7 +1033,7 @@ test("-- ends the options in both verifiers", () => {
     assert.equal(result.status, 0, `${name}: ${result.stdout}${result.stderr}`);
     assert.deepEqual(
       result.stdout.split("\n"),
-      [`PASS  ${LEVEL_0}`, "      observed: ACCEPT", "summary: 1 pass, 0 fail (1 fixtures)", ""],
+      [`PASS  ${LEVEL_0}`, "      observed: ACCEPT", "summary: 1 pass, 0 fail, 0 error (1 fixtures)", ""],
       name,
     );
     const empty = runVerifierArgs(argv, ["--"]);
@@ -1005,7 +1055,7 @@ test("an argument after -- that starts with - is a fixture path in both verifier
       assert.equal(result.status, 0, `${label}: ${result.stdout}${result.stderr}`);
       assert.deepEqual(
         result.stdout.split("\n"),
-        [`PASS  ${join(dir, args.at(-1))}`, "      observed: ACCEPT", "summary: 1 pass, 0 fail (1 fixtures)", ""],
+        [`PASS  ${join(dir, args.at(-1))}`, "      observed: ACCEPT", "summary: 1 pass, 0 fail, 0 error (1 fixtures)", ""],
         label,
       );
     }
@@ -1045,6 +1095,36 @@ test("an option decides before an empty argument is checked in both verifiers", 
     assert.equal(unknown.stdout, "", name);
     assert.equal(unknown.stderr, `${USAGE[name]}\n${PROGRAM[name]}: unknown option: --verbose\n`, name);
   }
+});
+
+// Without the cryptography package, verify.py ended in a ModuleNotFoundError
+// traceback, exit 1. It prints one line naming the package and the command that
+// installs it, exit 2, once the arguments are read, so --help and a usage error
+// do not need the package. `python3 -S` leaves site-packages, where pip installs
+// it, off the module path.
+test("verify.py reports a missing cryptography package in one line, exit 2", (t) => {
+  const [python, script] = VERIFIERS.python;
+  const env = { ...process.env };
+  delete env.PYTHONPATH;
+  const probe = spawnSync(python, ["-S", "-c", "import cryptography"], { encoding: "utf8", env });
+  if (probe.status === 0) {
+    t.skip("cryptography can be imported without site-packages here");
+    return;
+  }
+  const run = (...args) => spawnSync(python, ["-S", script, ...args], { encoding: "utf8", env });
+  const missing = run(LEVEL_0);
+  assert.equal(missing.status, 2, missing.stdout + missing.stderr);
+  assert.equal(missing.stdout, "");
+  assert.equal(
+    missing.stderr,
+    "verify.py needs the cryptography package: python3 -m pip install cryptography (see scripts/README.md#install)\n",
+  );
+  const help = run("--help");
+  assert.equal(help.status, 0, help.stdout + help.stderr);
+  assert.ok(help.stdout.startsWith(`${USAGE.python}\n`), help.stdout);
+  const unknown = run("--verbose");
+  assert.equal(unknown.status, 2, unknown.stdout + unknown.stderr);
+  assert.equal(unknown.stderr, `${USAGE.python}\nverify.py: unknown option: --verbose\n`);
 });
 
 // A path that cannot be stat'ed or read, or a directory that cannot be listed,
@@ -1094,7 +1174,7 @@ test("a symlink loop is reported as ERROR by both verifiers", { skip: process.pl
       runVerifier(argv, join(dir, "loop-a.json")),
       dir,
       [["loop-a.json", SYMLINK_LOOP]],
-      "summary: 0 pass, 1 fail (1 fixtures)",
+      "summary: 0 pass, 0 fail, 1 error (1 fixtures)",
     );
     assertErrorEntries(
       `${name} (walked)`,
@@ -1104,7 +1184,7 @@ test("a symlink loop is reported as ERROR by both verifiers", { skip: process.pl
         ["loop-a.json", SYMLINK_LOOP],
         ["loop-b.json", SYMLINK_LOOP],
       ],
-      "summary: 1 pass, 2 fail (3 fixtures)",
+      "summary: 1 pass, 0 fail, 2 error (3 fixtures)",
     );
   }
 });
@@ -1129,11 +1209,11 @@ test("a symlink to a directory is not followed during the walk by either verifie
     const walked = runVerifier(argv, dir);
     assert.equal(walked.status, 0, `${name}: ${walked.stdout}${walked.stderr}`);
     assert.deepEqual(passed(walked), ["file.json", join("real", "a.json"), "valid.json"].map((path) => join(dir, path)), name);
-    assert.deepEqual(walked.stdout.split("\n").slice(-2), ["summary: 3 pass, 0 fail (3 fixtures)", ""], name);
+    assert.deepEqual(walked.stdout.split("\n").slice(-2), ["summary: 3 pass, 0 fail, 0 error (3 fixtures)", ""], name);
     const named = runVerifier(argv, join(dir, "alias"));
     assert.equal(named.status, 0, `${name}: ${named.stdout}${named.stderr}`);
     assert.deepEqual(passed(named), [join(dir, "alias", "a.json")], name);
-    assert.deepEqual(named.stdout.split("\n").slice(-2), ["summary: 1 pass, 0 fail (1 fixtures)", ""], name);
+    assert.deepEqual(named.stdout.split("\n").slice(-2), ["summary: 1 pass, 0 fail, 0 error (1 fixtures)", ""], name);
   }
 });
 
@@ -1163,7 +1243,7 @@ test("a socket or a FIFO named *.json met during the walk is reported as ERROR b
         ["socket.json", /^ {6}not a regular file: /],
         ["fifo.json", /^ {6}not a regular file: /],
       ],
-      "summary: 1 pass, 2 fail (3 fixtures)",
+      "summary: 1 pass, 0 fail, 2 error (3 fixtures)",
     );
   }
 });
@@ -1186,8 +1266,8 @@ test(
       [join("locked", "sub"), NO_PERMISSION],
     ];
     for (const [name, argv] of Object.entries(VERIFIERS)) {
-      assertErrorEntries(`${name} (named)`, runVerifier(argv, join(dir, "locked")), dir, errors, "summary: 0 pass, 2 fail (2 fixtures)");
-      assertErrorEntries(`${name} (walked)`, runVerifier(argv, dir), dir, errors, "summary: 1 pass, 2 fail (3 fixtures)");
+      assertErrorEntries(`${name} (named)`, runVerifier(argv, join(dir, "locked")), dir, errors, "summary: 0 pass, 0 fail, 2 error (2 fixtures)");
+      assertErrorEntries(`${name} (walked)`, runVerifier(argv, dir), dir, errors, "summary: 1 pass, 0 fail, 2 error (3 fixtures)");
     }
   },
 );
@@ -1205,14 +1285,14 @@ test(
         runVerifier(argv, join(dir, "locked")),
         dir,
         [["locked", NO_PERMISSION]],
-        "summary: 0 pass, 1 fail (1 fixtures)",
+        "summary: 0 pass, 0 fail, 1 error (1 fixtures)",
       );
       assertErrorEntries(
         `${name} (walked)`,
         runVerifier(argv, dir),
         dir,
         [["locked", NO_PERMISSION]],
-        "summary: 1 pass, 1 fail (2 fixtures)",
+        "summary: 1 pass, 0 fail, 1 error (2 fixtures)",
       );
     }
   },

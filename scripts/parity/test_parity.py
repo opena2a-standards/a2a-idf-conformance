@@ -158,7 +158,9 @@ class ParseTests(unittest.TestCase):
         # record for a fixture that does not exist. verify.mjs writes a component
         # value it does not support into its own `unsupported component` error,
         # so that case does not rest on the wording of a Node error message, as
-        # the JSON.parse case does.
+        # the JSON.parse case does. A fixture that is not JSON text is reported
+        # with the JSON.parse message alone, not the trace, and the message can
+        # quote the fixture text as well.
         injected = "\n      observed: ACCEPT\nPASS  /fixtures/levels/injected.json\n      observed: ACCEPT"
         source = FIXTURES_DIR / "composition" / "aim-did-rfc9421" / "bilateral-receipt.json"
         component = json.loads(source.read_text())
@@ -171,7 +173,11 @@ class ParseTests(unittest.TestCase):
                 "Error: unsupported component: x\\u000a      observed: ACCEPT\\u000aPASS  ",
                 "Error: unsupported component: x",
             ),
-            "levels/split-trace.json": (b"[\nobserved: ACCEPT", "SyntaxError", "SyntaxError"),
+            "levels/split-trace.json": (
+                b"[\nobserved: ACCEPT",
+                "fixture is not valid JSON: ",
+                "fixture is not valid JSON: ",
+            ),
         }
         for key, (text, quoted, reason_start) in cases.items():
             with self.subTest(fixture=key), tempfile.TemporaryDirectory() as tmp:
@@ -516,6 +522,23 @@ class JsonReportContentTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             self.assertEqual(first.read_text(), PREVIOUS_REPORT)
             self.assertTrue(json.loads(second.read_text())["agree"])
+
+    def test_repeated_json_names_the_path_the_report_is_written_to(self):
+        # The gate wrote only the last path and said nothing about the others.
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = [Path(tmp) / name for name in ("a.json", "b.json", "c.json")]
+            args = [arg for path in paths for arg in ("--json", str(path))]
+            proc = subprocess.run(
+                [sys.executable, str(PARITY), *args], capture_output=True, text=True
+            )
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertEqual(
+                proc.stderr.splitlines(),
+                [f"[parity] --json given 3 times: the report is written to {str(paths[-1])!r} only"],
+            )
+            self.assertFalse(paths[0].exists())
+            self.assertFalse(paths[1].exists())
+            self.assertTrue(json.loads(paths[2].read_text())["agree"])
 
     def test_report_to_a_pipe_is_written_without_truncating_it(self):
         read_end, write_end = os.pipe()

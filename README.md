@@ -34,7 +34,7 @@ Wrap your implementation in a command that takes a fixtures directory, evaluates
 pipx run --spec git+https://github.com/opena2a-standards/a2a-idf-conformance a2a-idf-conformance --verifier mylib="node ../mylib/conformance.js"
 ```
 
-The gate runs it beside both reference verifiers and reports `PARITY: PASS` only when every implementation agrees on every fixture and matches the outcome pinned in the fixture; otherwise it reports `PARITY: FAIL` and exits 1. The full input and output contract is in [`scripts/README.md`](./scripts/README.md#testing-another-implementation).
+The gate runs it beside both reference verifiers and reports `PARITY: PASS` only when every implementation agrees on every fixture and matches the outcome pinned in the fixture; otherwise it reports `PARITY: FAIL` and exits 1. The full input and output contract is in [Testing another implementation](./docs/testing-another-implementation.md).
 
 To change the suite, for example to add a fixture or to run the tooling tests, run the gate from a clone:
 

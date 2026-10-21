@@ -10,9 +10,16 @@ set: regeneration is deterministic and CI verifies the committed file matches.
 Usage:
     python3 scripts/conformance_profile.py            # (re)write conformance.json
     python3 scripts/conformance_profile.py --check    # exit 1 if committed file is stale
+    python3 scripts/conformance_profile.py --help
+
+The arguments are read before any file is: `--help` (or `-h`) prints the
+usage, and any argument other than `--check` (an unknown option, an
+abbreviation such as `--che`, or a word) is a usage error, exit 2. Neither
+writes conformance.json.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import sys
@@ -318,6 +325,20 @@ def build() -> dict:
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Write conformance.json, the conformance profile derived from the fixtures, "
+        "or check that the committed file is current.",
+        # An option must be spelled in full, so `--che` is reported instead of
+        # being taken for `--check`.
+        allow_abbrev=False,
+    )
+    ap.add_argument(
+        "--check",
+        action="store_true",
+        help="check conformance.json and the coverage claims of the documents instead of "
+        "writing the file; exit 1 when one is stale or wrong",
+    )
+    args = ap.parse_args()
     try:
         profile = build()
     except FixtureError as err:
@@ -326,7 +347,7 @@ def main() -> int:
     # The whole profile is encoded before conformance.json is opened, so a
     # profile that cannot be encoded leaves the file as it was.
     rendered = encode(profile)
-    if "--check" in sys.argv:
+    if args.check:
         if not OUT.exists():
             print("conformance.json missing; run scripts/conformance_profile.py")
             return 1

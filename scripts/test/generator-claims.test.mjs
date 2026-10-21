@@ -78,7 +78,7 @@ test("the generator rewrites the files it owns and pins the snapshot fixtures as
     asFound,
     SNAPSHOTS,
     `the documentation names ${SNAPSHOTS.join(" and ")} as the pinned files the generator leaves as found; ` +
-      `change scripts/README.md, docs/coverage.md, the header of ${GENERATOR} and this list together`,
+      `change scripts/README.md, docs/contributor-tools.md, docs/coverage.md, the header of ${GENERATOR} and this list together`,
   );
   for (const rel of asFound) {
     const hash = createHash("sha256").update(found.get(rel)).digest("hex");
@@ -111,15 +111,22 @@ test("no passage says that the generator rewrites every file or that CI fails on
 });
 
 // The passages that say what the generator writes: its entry in
-// scripts/README.md, its header comment, and the Status paragraph of
-// docs/coverage.md.
+// scripts/README.md, its section in docs/contributor-tools.md, its header
+// comment, and the Status paragraph of docs/coverage.md.
 function passages() {
   const readme = readFileSync(join(REPO, "scripts", "README.md"), "utf8").split("\n");
+  const tools = readFileSync(join(REPO, "docs", "contributor-tools.md"), "utf8").split("\n");
+  const section = tools.indexOf("## Fixture generator");
+  const sectionEnd = tools.findIndex((line, index) => index > section && line.startsWith("## "));
   const generator = readFileSync(join(REPO, GENERATOR), "utf8").split("\n");
   const coverage = readFileSync(join(REPO, "docs", "coverage.md"), "utf8").split("\n");
   const status = coverage.indexOf("## Status");
   return [
     ["scripts/README.md", readme.find((line) => line.startsWith("- [`generate-fixtures.mjs`](./generate-fixtures.mjs)"))],
+    [
+      "docs/contributor-tools.md",
+      section < 0 ? undefined : tools.slice(section + 1, sectionEnd < 0 ? undefined : sectionEnd).join("\n").trim(),
+    ],
     [GENERATOR, generator.slice(0, generator.findIndex((line) => !line.startsWith("#!") && !line.startsWith("//"))).join("\n")],
     ["docs/coverage.md", status < 0 ? undefined : coverage.slice(status + 1).join("\n").trim().split("\n\n")[0]],
   ];

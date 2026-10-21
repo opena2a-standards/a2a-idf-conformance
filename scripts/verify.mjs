@@ -19,6 +19,8 @@
 // than "-" alone, is an unknown option, never a fixture path; every argument
 // after "--" is a path. An empty argument is a usage error, not the current
 // directory.
+// The last line counts the fixtures that passed, failed (missed the pinned
+// outcome) and could not be evaluated (ERROR), each apart.
 // Exit code: 0 if every fixture's expected verdict (and reject category,
 // when pinned) is met, else 1; 2 for a usage error (no path, an empty
 // argument, or an unknown option).
@@ -1047,8 +1049,21 @@ function schemaViolation(schema, value, path) {
 
 // --- driver ---------------------------------------------------------------------
 
+// A fixture that is not JSON text is an input error, as a path that cannot be
+// read is: main() reports its message, not a stack trace.
+class NotJsonError extends Error {}
+
+function parseFixture(text) {
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    throw new NotJsonError(`fixture is not valid JSON: ${error.message}`);
+  }
+}
+
 function verifyFixture(path) {
-  const fixture = JSON.parse(readFileSync(path, "utf-8"));
+  const fixture = parseFixture(readFileSync(path, "utf-8"));
   const schemas = loadSchemas();
   const family = fixtureFamily(fixture, schemas);
   const violation = schemaViolation(schemas[family], fixture, "");
@@ -1188,6 +1203,10 @@ function main() {
   const paths = pathArgs.flatMap(collectFixtures);
   let passCount = 0;
   let failCount = 0;
+  // A fixture the verifier could not evaluate (ERROR) is counted apart from one
+  // that missed its pinned outcome (FAIL), so a path typo does not read as a
+  // conformance failure. Either one makes the exit code 1.
+  let errorCount = 0;
   for (const { path: abs, error: listingError } of paths) {
     try {
       if (listingError !== undefined) throw listingError;
@@ -1212,24 +1231,26 @@ function main() {
         }
       }
     } catch (err) {
-      failCount++;
+      errorCount++;
       report(`ERROR ${abs}`);
-      // A failed system call (ENOENT, ENOTDIR, EACCES, ELOOP) and an entry the
-      // walk does not read are problems with the input, and their message names
-      // the path; a stack trace is kept for a verifier fault. The trace is one
-      // report line, its line feeds written as \u000a, because its message can
-      // quote fixture text (an unsupported component error quotes the component
-      // value, and a JSON.parse syntax error can quote the text around the
-      // error) and a line feed there would start a line the parity gate reads.
+      // A failed system call (ENOENT, ENOTDIR, EACCES, ELOOP), an entry the walk
+      // does not read and a fixture that is not JSON text are problems with the
+      // input, so their message is printed alone: a system call's message names
+      // the path, and fixtureListing() and parseFixture() word the other two. A
+      // stack trace is kept for a verifier fault. Either is one report line, its
+      // line feeds written as \u000a, because its message can quote fixture text
+      // (an unsupported component error quotes the component value, and a
+      // JSON.parse syntax error can quote the text around the error) and a line
+      // feed there would start a line the parity gate reads.
       // collectFixtures walks directories, so no directory is read as a file
       // (EISDIR, whose message names no path).
-      const inputError = err.syscall !== undefined || err === listingError;
+      const inputError = err.syscall !== undefined || err === listingError || err instanceof NotJsonError;
       if (inputError) report(`      ${err.message}`);
       else report(`      ${err.stack ?? err.message}`);
     }
   }
-  console.log(`summary: ${passCount} pass, ${failCount} fail (${paths.length} fixtures)`);
-  process.exit(failCount === 0 ? 0 : 1);
+  console.log(`summary: ${passCount} pass, ${failCount} fail, ${errorCount} error (${paths.length} fixtures)`);
+  process.exit(failCount === 0 && errorCount === 0 ? 0 : 1);
 }
 
 main();

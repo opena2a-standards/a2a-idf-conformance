@@ -18,6 +18,10 @@
 // signature bytes are stable across runs and platforms.
 //
 // Usage:  node scripts/generate-fixtures.mjs
+//         node scripts/generate-fixtures.mjs --help
+// The generator takes no arguments, and reads them before it builds or writes
+// anything: --help (or -h) prints the usage and exits 0, and any other
+// argument is a usage error, exit 2. Neither writes a file.
 
 import {
   createHash,
@@ -31,6 +35,34 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+// --- arguments -------------------------------------------------------------------
+
+const USAGE = "usage: node generate-fixtures.mjs";
+const HELP = [
+  USAGE,
+  "Writes the fixtures and vectors this script owns, then MANIFEST.sha256. Takes no arguments.",
+  "Exit code: 0 when the files are written, 2 for a usage error.",
+].join("\n");
+
+// Called before FILES is built, so --help and a usage error write nothing. The
+// argument is printed with its control characters escaped, as verify.mjs prints
+// an unknown option: it can be a file name a shell pattern expanded to.
+function readArguments(args) {
+  for (const arg of args) {
+    if (arg === "--help" || arg === "-h") {
+      console.log(HELP);
+      process.exit(0);
+    }
+    const kind = arg.startsWith("-") && arg !== "-" ? "unknown option" : "unexpected argument";
+    const shown = arg.replace(/[\u0000-\u001f\u007f-\u009f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+    console.error(USAGE);
+    console.error(`generate-fixtures.mjs: ${kind}: ${shown}`);
+    process.exit(2);
+  }
+}
+
+readArguments(process.argv.slice(2));
 
 // --- RFC 8032 §7.1 test seeds (published in the RFC; test-only) ---------------
 

@@ -1,10 +1,11 @@
-// Regression tests for the install commands in README.md, scripts/README.md
-// and COSIGNERS.md.
+// Regression tests for the install commands in README.md, scripts/README.md,
+// docs/install.md and COSIGNERS.md.
 // A Python marked as externally managed (PEP 668) refuses `pip install`
 // outside a virtual environment, so each documented `pip install` line must
 // run with `python3` resolving to a virtual environment the block created.
 // Running those lines takes `bash` and the Python `venv` module, so each
-// statement in scripts/README.md of what the tooling tests need names both.
+// statement in scripts/README.md or docs/tooling-tests.md of what the tooling
+// tests need names both.
 //
 // Usage:  node --test scripts/test/*.test.mjs
 
@@ -35,7 +36,7 @@ function bashBlocks(text) {
   return blocks;
 }
 
-for (const rel of ["README.md", "scripts/README.md", "COSIGNERS.md"]) {
+for (const rel of ["README.md", "scripts/README.md", "docs/install.md", "COSIGNERS.md"]) {
   test(`${rel}: each pip install line runs inside a virtual environment the block creates`, (t) => {
     const blocks = bashBlocks(readFileSync(join(REPO, rel), "utf8"))
       .map((lines) => ({ lines, pip: lines.findIndex((line) => /^python3 -m pip install\b/.test(line)) }))
@@ -60,19 +61,26 @@ for (const rel of ["README.md", "scripts/README.md", "COSIGNERS.md"]) {
   });
 }
 
-// A statement of what the tooling tests need is a "need"/"needs" clause in
-// scripts/README.md that names both git and `cryptography`; the clause ends at
-// a full stop or a parenthesis.
-test("scripts/README.md: each statement of what the tooling tests need names bash and the venv module", () => {
-  const rel = "scripts/README.md";
+// A statement of what the tooling tests need is a "need"/"needs" clause that
+// names both git and `cryptography`; the clause ends at a full stop or a
+// parenthesis. docs/tooling-tests.md, which gives the test commands, states it;
+// scripts/README.md links to that page and is held to the same rule.
+test("scripts/README.md, docs/tooling-tests.md: each statement of what the tooling tests need names bash and the venv module", () => {
   const statements = [];
-  readFileSync(join(REPO, rel), "utf8").split("\n").forEach((line, index) => {
-    for (const match of line.matchAll(/\bneeds? [^.()]*/gi)) {
-      if (/\bgit\b/.test(match[0]) && /cryptography/.test(match[0])) statements.push({ line: index + 1, text: match[0] });
-    }
-  });
-  assert.ok(statements.length > 0, `${rel} has no statement of what the tooling tests need`);
-  for (const { line, text } of statements) {
+  for (const rel of ["scripts/README.md", "docs/tooling-tests.md"]) {
+    readFileSync(join(REPO, rel), "utf8").split("\n").forEach((line, index) => {
+      for (const match of line.matchAll(/\bneeds? [^.()]*/gi)) {
+        if (/\bgit\b/.test(match[0]) && /cryptography/.test(match[0])) {
+          statements.push({ rel, line: index + 1, text: match[0] });
+        }
+      }
+    });
+  }
+  assert.ok(
+    statements.some(({ rel }) => rel === "docs/tooling-tests.md"),
+    "docs/tooling-tests.md has no statement of what the tooling tests need",
+  );
+  for (const { rel, line, text } of statements) {
     assert.match(text, /\bbash\b/, `${rel}:${line} "${text}" does not name bash, which runs the install commands`);
     assert.match(text, /\bvenv\b/, `${rel}:${line} "${text}" does not name the venv module, which creates the virtual environment`);
   }

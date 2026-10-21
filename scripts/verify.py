@@ -23,9 +23,12 @@ prints the usage on stdout. Any other argument that starts with "-", other
 than "-" alone, is an unknown option, never a fixture path; every argument
 after "--" is a path. An empty argument is a usage error, not the current
 directory.
+The last line counts the fixtures that passed, failed (missed the pinned
+outcome) and could not be evaluated (ERROR), each apart.
 Exit code: 0 if every fixture's expected verdict (and reject category,
 when pinned) is met, else 1; 2 for a usage error (no path, an empty
-argument, or an unknown option).
+argument, or an unknown option), and 2 when the `cryptography` package is
+not installed, reported in one line.
 """
 
 from __future__ import annotations
@@ -53,8 +56,21 @@ CONTENT_DIGEST_ALGORITHMS = {
     "sha-512": hashlib.sha512,
 }
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+try:
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+except ModuleNotFoundError as exc:
+    # Without the package, main() prints this one line instead of a traceback
+    # once the arguments are read, so --help and a usage error do not need it.
+    # Another import error (a broken install) keeps its traceback.
+    if exc.name != "cryptography":
+        raise
+    MISSING_DEPENDENCY = (
+        "verify.py needs the cryptography package: python3 -m pip install cryptography "
+        "(see scripts/README.md#install)"
+    )
+else:
+    MISSING_DEPENDENCY = None
 
 # Envoys signature/v1 §4.3: the RFC 9421 `tag` an A2A message signature carries.
 A2A_MESSAGE_TAG = "a2a-message"
@@ -1477,7 +1493,11 @@ def _json_member_name(text: str, idx: int) -> tuple[str, int]:
 
 
 def verify_fixture(path: Path) -> tuple[bool, str | None, list[str]]:
-    fixture = _load_json(path.read_text(encoding="utf-8"))
+    try:
+        fixture = _load_json(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        # Worded as verify.mjs words a JSON.parse syntax error.
+        raise ValueError(f"fixture is not valid JSON: {exc}") from None
     schemas = load_schemas()
     family = fixture_family(fixture, schemas)
     violation = schema_violation(schemas[family], fixture, "")
@@ -1580,6 +1600,9 @@ def main() -> int:
         print(USAGE, file=sys.stderr)
         print("verify.py: an empty argument is not a path", file=sys.stderr)
         return 2
+    if MISSING_DEPENDENCY is not None:
+        print(MISSING_DEPENDENCY, file=sys.stderr)
+        return 2
 
     # A stdout that is not UTF-8 may not encode every character of a line: print
     # such a character escaped instead of raising while reporting.
@@ -1588,6 +1611,10 @@ def main() -> int:
     paths = [entry for arg in path_args for entry in collect_fixtures(arg)]
     pass_count = 0
     fail_count = 0
+    # A fixture the verifier could not evaluate (ERROR) is counted apart from
+    # one that missed its pinned outcome (FAIL), so a path typo does not read as
+    # a conformance failure. Either one makes the exit code 1.
+    error_count = 0
     for path, listing_error in paths:
         try:
             if listing_error is not None:
@@ -1606,11 +1633,13 @@ def main() -> int:
             for line in lines:
                 _print(f"      {line}", json_text)
         except Exception as exc:
-            fail_count += 1
+            error_count += 1
             _print(f"ERROR {path}")
             _print(f"      {exc}")
-    print(f"summary: {pass_count} pass, {fail_count} fail ({len(paths)} fixtures)")
-    return 0 if fail_count == 0 else 1
+    print(
+        f"summary: {pass_count} pass, {fail_count} fail, {error_count} error ({len(paths)} fixtures)"
+    )
+    return 0 if fail_count == 0 and error_count == 0 else 1
 
 
 _CONTROL = re.compile("[\x00-\x1f\x7f-\x9f]")
