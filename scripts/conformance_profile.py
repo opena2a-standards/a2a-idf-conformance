@@ -61,6 +61,10 @@ SUITE = {
             "reason": "the envelope fixtures pin no verification time, so neither verifier compares issuedAt, expiresAt or respondedAt with a clock",
         },
         {
+            "specSection": "§7 and §8 envelopes — the authority of a chain's root issuer and the identity of a receipt's responder",
+            "reason": "the fixtures pin no trust policy and no expected responder, and an issuerKeyid or responderKeyid only has to resolve to a key, so an ACCEPT does not show that a party other than the request signer granted the scope or received the request",
+        },
+        {
             "specSection": "v1.1 Vouching attestations",
             "reason": "spec cycle not started; fixture shape depends on the CTEF envelope decision",
         },

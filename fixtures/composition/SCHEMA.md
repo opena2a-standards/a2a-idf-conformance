@@ -220,6 +220,15 @@ The schema stage checks the members it can: an `envelope` that is present is an 
 
 Neither verifier compares `issuedAt`, `expiresAt` or `respondedAt` with a clock: the fixtures pin no verification time, and `conformance.json` lists that under `notCovered`.
 
+## What an envelope verdict does not establish
+
+An ACCEPT shows that the envelope passed the checks above. Two things are outside those checks, because the root link's `issuerKeyid` and the `responderKeyid` only have to resolve to a key, and `signatureParams.keyid` resolves to the key that signed the request:
+
+- **The authority of a chain's root issuer.** No check decides whether the root link's issuer may grant the scope it grants, so an ACCEPT does not show that a party other than the request signer granted that scope. The root issuer of [`delegation-chain-3link.json`](./aim-did-rfc9421/delegation-chain-3link.json) is `signatureParams.keyid`, as it is in every chain fixture. Once the wire layer accepts the request, a one-link chain whose `issuerKeyid` and `subjectKeyid` are both `signatureParams.keyid`, signed with the key that signed the request, is accepted whenever the fixture does not fail at stage `envelope`, the link's `scope` holds the request and `maxDepth` is at least 1. Its scope can grant more than the request: `["DELETE /api/everything", "POST /api/echo"]` is accepted for a `POST /api/echo` request.
+- **The identity of a receipt's responder.** No check decides who may sign a bilateral receipt, and the fixtures pin no expected responder, so an ACCEPT does not show that a party other than the request signer received the request. A copy of [`bilateral-receipt.json`](./aim-did-rfc9421/bilateral-receipt.json) whose `responderKeyid`, in `receiptPayloadJcs` and beside it, is `signatureParams.keyid`, with the payload signed by the key that signed the request, is accepted.
+
+Whether the request is authorized is the receiving agent's decision, which A2A-IDF requires it to make independently of delegation claims (Security Considerations, Delegation), and an APS verifier also applies its own trust policy to the root of a chain (draft-pidlisnyi-aps-04, Section 4.3). The fixtures pin no trust policy, and `conformance.json` lists the authority of a chain's root issuer and the identity of a receipt's responder under `notCovered`. An implementation that applies a root trust policy runs the chain fixtures with a policy that accepts each fixture's root issuer. [`scripts/test/envelope-claims.test.mjs`](../../scripts/test/envelope-claims.test.mjs) runs both reference verifiers on such a chain and such a receipt, and checks the root issuer of each chain fixture.
+
 ## Reproducibility checklist
 
 Before opening a PR:
