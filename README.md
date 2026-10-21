@@ -85,7 +85,7 @@ Three shapes per fixture, pinned to the RFC 8032 §7.1 keypair:
 The reference verifiers check the wire signature in all three shapes, and then the envelope:
 
 - **Delegation chain:** each link carries its issuer's Ed25519 signature over the RFC 8785 JCS form of the link, bound to the signature of the link before it. The verifiers check the number of links against `maxDepth`, that each link's issuer is the subject of the link before it, each link's signature, that each scope is a subset of the one before it and no expiry is later than the one before it, and that the last link delegates to the key that signed the request with a scope that grants it.
-- **Bilateral receipt:** the verifiers check the responder's Ed25519 signature over the JCS form of the receipt payload, and that the payload names the signature and keyid of this request and the responder, response time and status the envelope states.
+- **Bilateral receipt:** the verifiers check the responder's Ed25519 signature over the JCS form of the receipt payload, and that the payload names the signature and keyid of this request and the responder, response time and status the envelope states. No check compares the responder's keyid or key with the request's, so an ACCEPT does not show that a party other than the request signer received or acknowledged the request ([bilateral receipt checks](./fixtures/composition/SCHEMA.md#bilateral-receipt)).
 
 An envelope ACCEPT does not show that a party other than the request signer granted the chain's scope or received the request, because no check decides who may issue a chain's root link or sign a receipt ([what an envelope verdict does not establish](./fixtures/composition/SCHEMA.md#what-an-envelope-verdict-does-not-establish)).
 
