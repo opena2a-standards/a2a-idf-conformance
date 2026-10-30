@@ -23,7 +23,8 @@
 // outcome) and could not be evaluated (ERROR), each apart.
 // Exit code: 0 if every fixture's expected verdict (and reject category,
 // when pinned) is met, else 1; 2 for a usage error (no path, an empty
-// argument, or an unknown option).
+// argument, or an unknown option) or when no *.json fixture was found under
+// the paths given (each such directory is named on stderr).
 
 import { lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
@@ -1164,7 +1165,7 @@ const USAGE = "usage: node verify.mjs <fixture.json | directory> [...]";
 const HELP = [
   USAGE,
   "Directories are walked recursively for *.json fixtures.",
-  "Exit code: 0 when every fixture meets its pinned outcome, 1 otherwise, 2 for a usage error.",
+  "Exit code: 0 when every fixture meets its pinned outcome, 1 otherwise, 2 for a usage error or when no *.json fixture was found under the paths given.",
 ].join("\n");
 
 function main() {
@@ -1200,7 +1201,17 @@ function main() {
     process.exit(2);
   }
 
-  const paths = pathArgs.flatMap(collectFixtures);
+  // A directory under which no *.json fixture was found is named on stderr,
+  // beside other paths too, so a mistyped directory beside a real one is
+  // visible. Its name is printed as a report line is, its control characters
+  // escaped.
+  const paths = pathArgs.flatMap((arg) => {
+    const entries = collectFixtures(arg);
+    if (entries.length === 0) {
+      report(`verify.mjs: no fixtures found under ${resolve(arg)}`, false, console.error);
+    }
+    return entries;
+  });
   let passCount = 0;
   let failCount = 0;
   // A fixture the verifier could not evaluate (ERROR) is counted apart from one
@@ -1250,6 +1261,9 @@ function main() {
     }
   }
   console.log(`summary: ${passCount} pass, ${failCount} fail, ${errorCount} error (${paths.length} fixtures)`);
+  // A run that collected no fixture reached no verdict, so it exits 2, never
+  // the 0 of a run whose every fixture met its pinned outcome.
+  if (paths.length === 0) process.exit(2);
   process.exit(failCount === 0 && errorCount === 0 ? 0 : 1);
 }
 

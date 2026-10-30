@@ -53,6 +53,8 @@ An empty argument is a usage error rather than the current directory. An unset v
 
 `verify.py` without the `cryptography` package prints one line on stderr and exits 2: `verify.py needs the cryptography package: python3 -m pip install cryptography (see scripts/README.md#install)`. It reads its arguments first, so `--help` and a usage error do not need the package.
 
+A directory argument under which no `*.json` fixture was found, such as an empty directory or one that holds only other files, is named on stderr as `no fixtures found under <dir>`, with `<dir>` as an absolute path. The line is printed when other arguments hold fixtures too, so a mistyped directory beside a real one is visible. A run that found no fixture under any argument exits 2 (see [Summary line and exit code](#summary-line-and-exit-code)).
+
 ## Output
 
 Each verifier prints one block per fixture:
@@ -126,6 +128,6 @@ Some lines quote strings as JSON text, which writes a backslash as `\\` already,
 
 The final line is `summary: N pass, M fail, E error (T fixtures)`. `M` counts the fixtures that missed their pinned outcome (`FAIL`). `E` counts the fixtures the verifier could not evaluate (`ERROR`), so a path typo does not read as a conformance failure.
 
-The exit code is 0 if every fixture met its expected verdict (and reject category, when pinned), else 1. A `FAIL` and an `ERROR` both make it 1. It is 2 for a usage error, and for `verify.py` without the `cryptography` package.
+The exit code is 0 if every fixture met its expected verdict (and reject category, when pinned), else 1. A `FAIL` and an `ERROR` both make it 1. It is 2 for a usage error, for `verify.py` without the `cryptography` package, and when no `*.json` fixture was found under the paths given: each such directory is named on stderr as `no fixtures found under <dir>`, so a run that evaluated nothing never exits 0.
 
 The parity gate reads the `PASS`/`FAIL`/`ERROR` lines and the `observed:` lines, not the summary line, to assert cross-implementation agreement. An `ERROR` in one verifier and a verdict in the other is reported as a divergence.
