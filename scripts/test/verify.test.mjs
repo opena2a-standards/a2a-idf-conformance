@@ -970,9 +970,9 @@ const PROGRAM = { node: "verify.mjs", python: "verify.py" };
 // cryptography package, a case verify.mjs, which imports only Node built-ins,
 // does not have.
 const EXIT_CODES = {
-  node: "Exit code: 0 when every fixture meets its pinned outcome, 1 otherwise, 2 for a usage error.",
+  node: "Exit code: 0 when every fixture meets its pinned outcome, 1 otherwise, 2 for a usage error or when no *.json fixture was found under the paths given.",
   python:
-    "Exit code: 0 when every fixture meets its pinned outcome, 1 otherwise, 2 for a usage error or a missing cryptography package.",
+    "Exit code: 0 when every fixture meets its pinned outcome, 1 otherwise, 2 for a usage error or a missing cryptography package, or when no *.json fixture was found under the paths given.",
 };
 const LEVEL_0 = join(REPO, "fixtures/levels/level-0-self-asserted.json");
 
@@ -1134,6 +1134,70 @@ test("verify.py reports a missing cryptography package in one line, exit 2", (t)
   const unknown = run("--verbose");
   assert.equal(unknown.status, 2, unknown.stdout + unknown.stderr);
   assert.equal(unknown.stderr, `${USAGE.python}\nverify.py: unknown option: --verbose\n`);
+});
+
+// A run under which no *.json fixture was found reached no verdict, so it does
+// not exit 0 as a run whose every fixture met its pinned outcome does. Both
+// verifiers printed the summary line alone and exited 0, with nothing on stderr.
+// Each directory argument under which none was found is named on stderr by its
+// absolute path, stdout is the summary line alone, and the exit code is 2. A
+// directory holding only other files and directories, one whose name ends in
+// .json among them, is the same case as an empty one.
+const NO_FIXTURES_SUMMARY = "summary: 0 pass, 0 fail, 0 error (0 fixtures)\n";
+
+test("a directory under which no fixture was found is named on stderr and exits 2 in both verifiers", (t) => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "verify-")));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const empty = join(dir, "empty");
+  mkdirSync(empty);
+  for (const [name, argv] of Object.entries(VERIFIERS)) {
+    // Given by its absolute path, and by a path relative to its parent.
+    for (const [arg, options] of [[empty, {}], ["empty", { cwd: dir }]]) {
+      const label = `${name} ${arg}`;
+      const result = runVerifier(argv, arg, options);
+      assert.equal(result.status, 2, `${label}: ${result.stdout}${result.stderr}`);
+      assert.equal(result.stdout, NO_FIXTURES_SUMMARY, label);
+      assert.equal(result.stderr, `${PROGRAM[name]}: no fixtures found under ${empty}\n`, label);
+    }
+  }
+});
+
+test("a directory holding only other files and a directory named *.json is named on stderr and exits 2 in both verifiers", (t) => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "verify-")));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, "x.yaml"), "a: 1\n");
+  mkdirSync(join(dir, "sub.json"));
+  for (const [name, argv] of Object.entries(VERIFIERS)) {
+    const result = runVerifier(argv, dir);
+    assert.equal(result.status, 2, `${name}: ${result.stdout}${result.stderr}`);
+    assert.equal(result.stdout, NO_FIXTURES_SUMMARY, name);
+    assert.equal(result.stderr, `${PROGRAM[name]}: no fixtures found under ${dir}\n`, name);
+  }
+});
+
+// Beside a directory that holds a fixture, the exit code is decided by the
+// fixtures evaluated and stdout is what that directory alone gives, and the
+// directory under which none was found is still named on stderr, so a mistyped
+// directory beside a real one is visible. A directory that holds a fixture is
+// not named.
+test("an empty directory beside a fixture is named on stderr in both verifiers, and the run keeps its exit code", (t) => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "verify-")));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const mixed = join(dir, "mixed");
+  const empty = join(dir, "empty");
+  mkdirSync(mixed);
+  mkdirSync(empty);
+  writeFileSync(join(mixed, "ok.json"), readFileSync(LEVEL_0));
+  for (const [name, argv] of Object.entries(VERIFIERS)) {
+    const result = runVerifierArgs(argv, [mixed, empty]);
+    assert.equal(result.status, 0, `${name}: ${result.stdout}${result.stderr}`);
+    assert.deepEqual(
+      result.stdout.split("\n"),
+      [`PASS  ${join(mixed, "ok.json")}`, "      observed: ACCEPT", "summary: 1 pass, 0 fail, 0 error (1 fixtures)", ""],
+      name,
+    );
+    assert.equal(result.stderr, `${PROGRAM[name]}: no fixtures found under ${empty}\n`, name);
+  }
 });
 
 // A path that cannot be stat'ed or read, or a directory that cannot be listed,

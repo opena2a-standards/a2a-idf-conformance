@@ -27,8 +27,9 @@ The last line counts the fixtures that passed, failed (missed the pinned
 outcome) and could not be evaluated (ERROR), each apart.
 Exit code: 0 if every fixture's expected verdict (and reject category,
 when pinned) is met, else 1; 2 for a usage error (no path, an empty
-argument, or an unknown option), and 2 when the `cryptography` package is
-not installed, reported in one line.
+argument, or an unknown option) or when no *.json fixture was found under
+the paths given (each such directory is named on stderr), and 2 when the
+`cryptography` package is not installed, reported in one line.
 """
 
 from __future__ import annotations
@@ -1572,7 +1573,7 @@ HELP = (
     "Directories are walked recursively for *.json fixtures.\n"
     # main() exits 2 with MISSING_DEPENDENCY once the arguments are read.
     "Exit code: 0 when every fixture meets its pinned outcome, 1 otherwise, 2 for a usage error"
-    " or a missing cryptography package."
+    " or a missing cryptography package, or when no *.json fixture was found under the paths given."
 )
 
 
@@ -1610,7 +1611,16 @@ def main() -> int:
     # such a character escaped instead of raising while reporting.
     sys.stdout.reconfigure(errors="backslashreplace")
 
-    paths = [entry for arg in path_args for entry in collect_fixtures(arg)]
+    # A directory under which no *.json fixture was found is named on stderr,
+    # beside other paths too, so a mistyped directory beside a real one is
+    # visible. Its name is printed as a report line is, its control characters
+    # escaped.
+    paths: list[tuple[Path, Exception | None]] = []
+    for arg in path_args:
+        entries = collect_fixtures(arg)
+        if not entries:
+            _print(f"verify.py: no fixtures found under {Path(os.path.abspath(arg))}", file=sys.stderr)
+        paths.extend(entries)
     pass_count = 0
     fail_count = 0
     # A fixture the verifier could not evaluate (ERROR) is counted apart from
@@ -1641,6 +1651,10 @@ def main() -> int:
     print(
         f"summary: {pass_count} pass, {fail_count} fail, {error_count} error ({len(paths)} fixtures)"
     )
+    # A run that collected no fixture reached no verdict, so it exits 2, never
+    # the 0 of a run whose every fixture met its pinned outcome.
+    if not paths:
+        return 2
     return 0 if fail_count == 0 and error_count == 0 else 1
 
 

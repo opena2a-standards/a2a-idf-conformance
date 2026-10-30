@@ -17,7 +17,7 @@ An implementation provides this interface:
 - **Paths.** `<path>` is the fixture path the implementation was given (absolute). It can also be any path whose last `fixtures` directory component is followed by the path under `fixtures/`. `fixtures/levels/x.json` and `/any/checkout/fixtures/levels/x.json` both name `levels/x.json`. `my-fixtures/levels/x.json` does not, because `my-fixtures` is a different directory name.
 - **Lines.** A line ends at a line feed, and a carriage return also ends one. A line or paragraph separator (U+2028, U+2029) in a quoted fixture value does not.
 - **Gate status.** `PASS` when the observed outcome matches the fixture's `expected` block (`verifyResult`, and `rejectCategory` when present). `FAIL` when it does not. `ERROR` when the implementation could not reach a verdict.
-- **Exit code.** 0 when every fixture is `PASS`, non-zero otherwise.
+- **Exit code.** 0 when every fixture is `PASS`, non-zero otherwise, and non-zero when no fixture was found under the directory. Report that case on stderr, not as an `ERROR` block, which the gate reads as a fixture.
 
 ## What the gate reports
 
