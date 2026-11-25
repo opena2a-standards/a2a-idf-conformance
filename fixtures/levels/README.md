@@ -40,6 +40,7 @@ behavior outside the suite's scope — the fixtures pin what the record must
 | [`level-2-multi-defect-subject-and-evidence.json`](./level-2-multi-defect-subject-and-evidence.json) | 2 | REJECT[SUBJECT_MISMATCH] | Two defects: attestation subject.kid differs from the declared kid and `evidence.validationTime` is missing. Pins that the subject binding check runs before the evidence shape check. |
 | [`level-2-issuer-not-object.json`](./level-2-issuer-not-object.json) | 2 | REJECT[SHAPE_INVALID] | Attestation `issuer` is a string, not the `{name, kid, url}` object: a malformed field is a shape reject, never a verifier exception. |
 | [`level-2-verified-at-not-string.json`](./level-2-verified-at-not-string.json) | 2 | REJECT[SHAPE_INVALID] | Attestation `verifiedAt` is an array holding the timestamp, not a string: the timestamp check looks at the type before the format. |
+| [`level-2-attestation-lone-surrogate-key.json`](./level-2-attestation-lone-surrogate-key.json) | 2 | REJECT[SHAPE_INVALID] | The attestation carries an extra member whose property name ends in a lone surrogate (`\ud800`). The name has no UTF-8 encoding and cannot enter the JCS form, so the attestation is a shape reject, before the binding and signature checks. |
 | [`level-2-jcs-utf16-key-order.json`](./level-2-jcs-utf16-key-order.json) | 2 | ACCEPT | Signed attestation carries ASCII property names (`10`, `9`, `B`, `Z`, `_`, `a`, `aa`) whose UTF-16 code-unit order differs from numeric order and from case-insensitive order. A verifier that sorts either of those ways rejects it with SIGNATURE_INVALID. |
 
 Keys: the agent key is RFC 8032 §7.1 Test 1 ([`../../vectors/rfc8032-7-1.json`](../../vectors/rfc8032-7-1.json));
@@ -236,8 +237,10 @@ pins that case, so the two fixtures fail for different defects.
 A lone surrogate (an unpaired `\uD800`-`\uDFFF` escape) has no UTF-8
 encoding, and RFC 8785 §3.2.2.2 requires a JCS implementation to stop on one.
 Both reference verifiers reject an organization attestation that holds one, in
-a string or in a property name, with `SHAPE_INVALID` (Level 2 step 7). No
-fixture pins this: JSON parsers differ on whether they load such a string at
-all (RFC 8259 §8.2), so a fixture would fail some implementations before
-their verifier ran. `scripts/parity/test_verifier_agreement.py` covers it for
-the two reference verifiers.
+a string or in a property name, with `SHAPE_INVALID` (Level 2 step 7).
+[`level-2-attestation-lone-surrogate-key.json`](./level-2-attestation-lone-surrogate-key.json)
+pins it for a property name. JSON parsers differ on whether they load such a
+string at all (RFC 8259 §8.2), so an implementation whose parser refuses the
+fixture fails before its verifier runs; that is an input error, not a verdict.
+`scripts/parity/test_verifier_agreement.py` covers further spellings for the
+two reference verifiers.

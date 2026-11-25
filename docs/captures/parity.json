@@ -534,6 +534,18 @@
         "verdict": "REJECT"
       }
     },
+    "levels/level-2-attestation-lone-surrogate-key.json": {
+      "node": {
+        "category": "SHAPE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      },
+      "python": {
+        "category": "SHAPE_INVALID",
+        "gate": "PASS",
+        "verdict": "REJECT"
+      }
+    },
     "levels/level-2-attestation-non-bmp-keys.json": {
       "node": {
         "category": null,
@@ -688,6 +700,7 @@
     "levels/level-1-provider-url-percent-encoded.json": "ACCEPT",
     "levels/level-1-provider-url-space-in-host.json": "REJECT[SHAPE_INVALID]",
     "levels/level-2-attestation-expired.json": "REJECT[EXPIRED]",
+    "levels/level-2-attestation-lone-surrogate-key.json": "REJECT[SHAPE_INVALID]",
     "levels/level-2-attestation-non-bmp-keys.json": "ACCEPT",
     "levels/level-2-attestation-not-yet-valid.json": "REJECT[NOT_YET_VALID]",
     "levels/level-2-attestation-tampered.json": "REJECT[SIGNATURE_INVALID]",

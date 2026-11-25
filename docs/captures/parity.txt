@@ -1,4 +1,4 @@
-parity: 53 fixtures x 2 verifiers
+parity: 54 fixtures x 2 verifiers
   composition/aim-did-rfc9421/bilateral-receipt-other-request.json node=PASS:REJECT[RECEIPT_MISMATCH]  python=PASS:REJECT[RECEIPT_MISMATCH]
   composition/aim-did-rfc9421/bilateral-receipt-signature-tampered.json node=PASS:REJECT[RECEIPT_SIGNATURE_INVALID]  python=PASS:REJECT[RECEIPT_SIGNATURE_INVALID]
   composition/aim-did-rfc9421/bilateral-receipt-status-mismatch.json node=PASS:REJECT[RECEIPT_MISMATCH]  python=PASS:REJECT[RECEIPT_MISMATCH]
@@ -43,6 +43,7 @@ parity: 53 fixtures x 2 verifiers
   levels/level-1-provider-url-percent-encoded.json             node=PASS:ACCEPT  python=PASS:ACCEPT
   levels/level-1-provider-url-space-in-host.json               node=PASS:REJECT[SHAPE_INVALID]  python=PASS:REJECT[SHAPE_INVALID]
   levels/level-2-attestation-expired.json                      node=PASS:REJECT[EXPIRED]  python=PASS:REJECT[EXPIRED]
+  levels/level-2-attestation-lone-surrogate-key.json           node=PASS:REJECT[SHAPE_INVALID]  python=PASS:REJECT[SHAPE_INVALID]
   levels/level-2-attestation-non-bmp-keys.json                 node=PASS:ACCEPT  python=PASS:ACCEPT
   levels/level-2-attestation-not-yet-valid.json                node=PASS:REJECT[NOT_YET_VALID]  python=PASS:REJECT[NOT_YET_VALID]
   levels/level-2-attestation-tampered.json                     node=PASS:REJECT[SIGNATURE_INVALID]  python=PASS:REJECT[SIGNATURE_INVALID]

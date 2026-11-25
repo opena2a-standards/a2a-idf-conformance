@@ -1633,6 +1633,35 @@ function level2NonBmpKeysFixture() {
   };
 }
 
+function level2LoneSurrogateKeyFixture() {
+  const attestation = signedOrgAttestation({
+    verifiedAt: "2026-02-17T00:00:00Z",
+    expiresAt: "2027-02-17T00:00:00Z",
+    // Added after signing: a lone surrogate cannot enter the JCS form the registry signs.
+    tamper: (att) => {
+      att["note\ud800"] = "x";
+    },
+  });
+  return {
+    $schema: "https://a2a-idf.opena2a.org/schemas/fixture-level-v1.json",
+    name: "levels/level-2-attestation-lone-surrogate-key",
+    description:
+      "Negative fixture: an ORGANIZATION_VERIFIED attestation with one additional member whose property name ends in a lone surrogate, the escape \\ud800 with no low surrogate after it. Every required field is well-formed and correctly bound, and the registry signature covers the attestation without that member. A lone surrogate has no UTF-8 encoding and RFC 8785 §3.2.2.2 requires a JCS implementation to stop on one, so the attestation cannot enter the form it is signed over. A conforming verifier MUST reject at the shape stage with SHAPE_INVALID, before the binding and signature checks, and never raise an exception.",
+    spec: [
+      SPEC_IDF_LEVELS("§1 Organization Verification (attestation shape)"),
+      SPEC_RFC8785("§3.2.2.2 Serialization of Strings (a lone surrogate cannot be serialized)"),
+      SPEC_RFC8032("§7.1 Test 1 (agent key), Test 2 (registry issuer key)"),
+    ],
+    level: 2,
+    agentCard: agentCard("ORGANIZATION_VERIFIED", { attestations: [attestation] }),
+    evidence: {
+      issuerPublicKey: issuerPublicKeyJwk(),
+      validationTime: VALIDATION_TIME,
+    },
+    expected: { verifyResult: "REJECT", rejectCategory: "SHAPE_INVALID" },
+  };
+}
+
 function level2IssuerNotObjectFixture() {
   const attestation = signedOrgAttestation({
     verifiedAt: "2026-02-17T00:00:00Z",
@@ -1900,6 +1929,7 @@ const FILES = {
   "fixtures/levels/level-2-attestation-not-yet-valid.json": level2NotYetValidFixture(),
   "fixtures/levels/level-2-subject-mismatch.json": level2SubjectMismatchFixture(),
   "fixtures/levels/level-2-multi-defect-subject-and-evidence.json": level2MultiDefectFixture(),
+  "fixtures/levels/level-2-attestation-lone-surrogate-key.json": level2LoneSurrogateKeyFixture(),
   "fixtures/levels/level-2-issuer-not-object.json": level2IssuerNotObjectFixture(),
   "fixtures/levels/level-2-verified-at-not-string.json": level2VerifiedAtNotStringFixture(),
   "fixtures/levels/level-2-jcs-utf16-key-order.json": level2JcsUtf16KeyOrderFixture(),
