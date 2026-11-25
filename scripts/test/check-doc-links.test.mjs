@@ -297,6 +297,28 @@ test("splits at parentheses in shell blocks only, and does not read a comment", 
   assert.match(result.stdout, /^summary: 7 paths checked, 5 broken$/m);
 });
 
+test("reads a comment after a quote closes, at its own mark only, and a backslash in single quotes as a character", (t) => {
+  const root = scratchRepo(t, {
+    "README.md": [
+      "# Demo",
+      "",
+      "```bash",
+      "node scripts/closed-single.mjs 'a' # ; node scripts/nope.mjs",
+      "node scripts/other-mark.mjs \"'\" # ; node scripts/nope.mjs",
+      "node scripts/single-backslash.mjs 'a\\' # ; node scripts/nope.mjs",
+      "```",
+      "",
+    ].join("\n"),
+  });
+  const result = runCheck(root);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.doesNotMatch(result.stdout, /nope\.mjs/);
+  assert.match(result.stdout, /^FAIL {2}README\.md:4 {2}command script scripts\/closed-single\.mjs /m);
+  assert.match(result.stdout, /^FAIL {2}README\.md:5 {2}command script scripts\/other-mark\.mjs /m);
+  assert.match(result.stdout, /^FAIL {2}README\.md:6 {2}command script scripts\/single-backslash\.mjs /m);
+  assert.match(result.stdout, /^summary: 3 paths checked, 3 broken$/m);
+});
+
 test("splits at parentheses in a block labelled with any shell name, in any letter case", (t) => {
   const labels = ["bash", "sh", "zsh", "ksh", "shell", "console", "shell-session", "sh-session", "Bash", "SH"];
   const root = scratchRepo(t, {
