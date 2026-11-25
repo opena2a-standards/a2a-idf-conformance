@@ -8,6 +8,9 @@ name: ERC-8004 upstream status
 # the mechanism: it reads the live status every month, and it posts on #5 at the
 # 2026-11-17 backstop EVEN IF NOTHING CHANGED, so a quiet upstream still produces a
 # signal rather than another silence.
+#
+# This workflow runs no tests. The doc-link check (check-doc-links), node --test and
+# python3 -m unittest run on every push and pull request in conformance.yml.
 
 on:
   schedule:
