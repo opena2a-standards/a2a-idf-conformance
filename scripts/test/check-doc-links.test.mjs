@@ -319,6 +319,31 @@ test("splits at parentheses in a block labelled with any shell name, in any lett
   assert.match(result.stdout, new RegExp(`^summary: ${labels.length} paths checked, ${labels.length} broken$`, "m"));
 });
 
+// `;` is an operator, so the `#` after it in `echo x;# y ; ...` starts a comment
+// and the script named after it is not read; the `(` of `(node ...)` is a
+// command boundary, so the script inside is read. Both hold under every label.
+test("under every shell label, reads a comment that follows an operator and a command in parentheses", (t) => {
+  const labels = ["bash", "sh", "zsh", "ksh", "shell", "console", "shell-session", "sh-session", "Bash", "SH"];
+  const rows = [];
+  for (const label of labels) {
+    rows.push("```" + label);
+    rows.push("echo x;# y ; node scripts/missing.mjs");
+    rows.push("(node scripts/missing.mjs)");
+    rows.push("```", "");
+  }
+  const root = scratchRepo(t, { "README.md": ["# Demo", "", ...rows].join("\n") });
+  const result = runCheck(root);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.equal(result.stderr, "");
+  const failed = [...result.stdout.matchAll(/^FAIL {2}README\.md:(\d+) {2}command script scripts\/missing\.mjs /gm)].map((m) => Number(m[1]));
+  // Each block is five lines from line 3: fence, `echo`, `(node`, fence, blank.
+  assert.deepEqual(
+    failed,
+    labels.map((_, i) => 5 + 5 * i),
+  );
+  assert.match(result.stdout, new RegExp(`^summary: ${labels.length} paths checked, ${labels.length} broken$`, "m"));
+});
+
 test("follows a cd to a directory of up to 4096 characters, not longer", (t) => {
   const root = scratchRepo(t, { "README.md": "# Demo\n" });
   writeFileSync(
